@@ -1,0 +1,46 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+
+# Training artifacts
+checkpoints/
+runs/
+wandb/
+logs/
+
+# Data caches and generated tensors
+flow_cache/
+*.pt
+*.pth
+
+# Dataset assets
+data/celeba/
+
+# Environment files
+.env
+.env.*
+
