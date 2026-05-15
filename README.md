@@ -24,43 +24,35 @@ Standard single-branch discriminators can perform well on in-distribution sample
 The current repository contains:
 
 - `docs/master-plan.md`: full architecture, build plan, metrics, and dependency specification
-- `data/celeba/`: CelebA dataset assets used for training and evaluation
+- Week 1 scaffold for `config/`, `data/`, `models/`, `training/`, `evaluation/`, `checkpoints/`, `runs/`, `tests/`
+- CelebA bootstrap, validation, and optical-flow precompute utilities
+- Data pipeline tests for loader contract, augmentations, bootstrap failures, and flow smoke checks
 
-The implementation scaffold described in the plan has not been added yet.
-
-## Planned Project Structure
+## Project Structure
 
 ```text
 deepfake_detector/
 ├── config/
 │   └── config.yaml
 ├── data/
+│   ├── __init__.py
 │   ├── celeba_loader.py
 │   ├── precompute_flow.py
 │   └── augmentations.py
 ├── models/
-│   ├── discriminator.py
-│   ├── branch_a.py
-│   ├── branch_b.py
-│   └── branch_c.py
+│   └── __init__.py
 ├── training/
-│   ├── trainer.py
-│   ├── losses.py
-│   ├── phase1_train.py
-│   ├── phase2_train.py
-│   ├── phase3_train.py
-│   └── phase4_finetune.py
+│   ├── __init__.py
+│   └── tracker.py
 ├── evaluation/
-│   ├── eval.py
-│   ├── ensemble.py
-│   └── ood_eval.py
+│   └── __init__.py
 ├── checkpoints/
 ├── runs/
 ├── scripts/
 │   └── download_celeba.sh
 ├── tests/
-│   ├── test_model.py
-│   └── test_data.py
+│   ├── test_bootstrap_and_imports.py
+│   └── test_data_pipeline.py
 ├── requirements.txt
 └── README.md
 ```
@@ -218,12 +210,107 @@ pip install -r requirements.txt
 
 ## Getting Started
 
-At the current stage, the repository is documentation-first. Recommended next steps are:
+### 1. Create a Python environment
 
-1. Create the planned source tree from the master plan
-2. Add `requirements.txt` and `config/config.yaml`
-3. Implement the CelebA loader and flow precomputation pipeline
-4. Build and test Phase 1 training for Branch A
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 2. Configure Kaggle access
+
+The dataset bootstrap script requires:
+
+- `kaggle` CLI installed in the active environment
+- credentials at `~/.kaggle/kaggle.json`
+
+You can verify both quickly with:
+
+```bash
+command -v kaggle
+ls ~/.kaggle/kaggle.json
+```
+
+### 3. Download and extract CelebA
+
+```bash
+./scripts/download_celeba.sh
+```
+
+Expected extracted image directory:
+
+```text
+data/celeba/img_align_celeba/img_align_celeba
+```
+
+### 4. Validate the dataset
+
+The Week 1 target is:
+
+- `202,599` images
+- native resolution `178x218`
+
+Quick checks:
+
+```bash
+find data/celeba/img_align_celeba -type f \( -name '*.jpg' -o -name '*.jpeg' -o -name '*.png' \) | wc -l
+python3 - <<'PY'
+from data.celeba_loader import validate_celeba_dataset
+print(validate_celeba_dataset("data/celeba/img_align_celeba", sample_count=3))
+PY
+```
+
+### 5. Understand the Week 1 data contract
+
+- `CelebAFramePairDataset` returns resized `64x64` tensors as `frame_a` and `frame_b`
+- labels are `0` for real pairs and `1` for fake pairs
+- real pairs use same-identity sampling when `identity_CelebA.txt` is present
+- if `identity_CelebA.txt` is absent, real pairs fall back to adjacent-index sampling
+- fake pairs use one image plus a Gaussian-noise duplicate
+
+### 6. Run the test suite
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Notes:
+
+- the TensorBoard smoke test is skipped automatically if `tensorboard` is not installed
+- on macOS, setting `PYTHONPYCACHEPREFIX=.pycache_local` can avoid cache-permission issues in some shells
+
+### 7. Launch optical-flow precompute
+
+```bash
+PYTHONPATH=. python3 -u data/precompute_flow.py \
+  --img-dir data/celeba/img_align_celeba \
+  --out-dir data/flow_cache \
+  --method farneback
+```
+
+Each cached file is written as:
+
+```text
+data/flow_cache/{image_stem}_flow.pt
+```
+
+Each tensor has shape `(2, 64, 64)`.
+
+### 8. Start TensorBoard logging
+
+The default Week 1 tracking backend is TensorBoard through `training/tracker.py`. Once training scripts exist, logs should be written under:
+
+```text
+runs/
+```
+
+To inspect them:
+
+```bash
+tensorboard --logdir runs
+```
 
 ## Reference Document
 
