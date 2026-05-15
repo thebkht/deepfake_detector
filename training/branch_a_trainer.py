@@ -52,12 +52,25 @@ def _as_str_key_mapping(value: object, *, context: str) -> Dict[str, Any]:
     return {str(key): item for key, item in value.items()}
 
 
+def _as_float(value: object, *, context: str) -> float:
+    if not isinstance(value, (int, float, str)):
+        raise TypeError(f"Expected float-convertible value for {context}")
+    return float(value)
+
+
 def _build_optimizer(model: nn.Module, training_cfg: Dict[str, Any]) -> Adam:
     beta_values = cast(list[object], training_cfg["betas"])
     if len(beta_values) != 2:
         raise ValueError("Adam betas must contain exactly two values")
-    betas = (float(beta_values[0]), float(beta_values[1]))
-    return Adam(model.parameters(), lr=float(training_cfg["learning_rate"]), betas=betas)
+    betas = (
+        _as_float(beta_values[0], context="training.betas[0]"),
+        _as_float(beta_values[1], context="training.betas[1]"),
+    )
+    return Adam(
+        model.parameters(),
+        lr=_as_float(training_cfg["learning_rate"], context="training.learning_rate"),
+        betas=betas,
+    )
 
 
 def _build_scheduler(optimizer: Adam, training_cfg: Dict[str, Any]) -> CosineAnnealingLR:
@@ -96,6 +109,10 @@ def _run_epoch(
     criterion: nn.Module,
     device: torch.device,
     optimizer: Optional[Adam] = None,
+    epoch: int = 1,
+    total_epochs: int = 1,
+    split_name: str = "train",
+    log_interval: int = 100,
 ) -> Dict[str, float]:
     is_train = optimizer is not None
     model.train(is_train)
@@ -105,7 +122,8 @@ def _run_epoch(
     all_labels: list[np.ndarray] = []
     start = time.perf_counter()
 
-    for batch in dataloader:
+    num_batches = len(dataloader)
+    for batch_index, batch in enumerate(dataloader, start=1):
         frame_a = batch["frame_a"].to(device)
         frame_b = batch["frame_b"].to(device)
         labels = batch["label"].float().to(device)
@@ -125,6 +143,17 @@ def _run_epoch(
         total_loss += loss.item() * batch_size
         all_logits.append(logits.detach().cpu().numpy())
         all_labels.append(labels.detach().cpu().numpy())
+
+        if batch_index % log_interval == 0 or batch_index == num_batches:
+            running_loss = total_loss / total_examples
+            print(
+                (
+                    f"[Epoch {epoch}/{total_epochs}][{split_name}] "
+                    f"batch={batch_index}/{num_batches} "
+                    f"running_loss={running_loss:.4f}"
+                ),
+                flush=True,
+            )
 
     if total_examples == 0:
         raise ValueError("Received an empty dataloader split; cannot compute metrics")
@@ -334,8 +363,27 @@ def train_branch_a(
 
     try:
         for epoch in range(1, int(training_cfg["epochs"]) + 1):
-            train_metrics = _run_epoch(model, train_loader, criterion, device, optimizer=optimizer)
-            val_metrics = _run_epoch(model, val_loader, criterion, device)
+            train_metrics = _run_epoch(
+                model,
+                train_loader,
+                criterion,
+                device,
+                optimizer=optimizer,
+                epoch=epoch,
+                total_epochs=int(training_cfg["epochs"]),
+                split_name="train",
+                log_interval=100,
+            )
+            val_metrics = _run_epoch(
+                model,
+                val_loader,
+                criterion,
+                device,
+                epoch=epoch,
+                total_epochs=int(training_cfg["epochs"]),
+                split_name="val",
+                log_interval=50,
+            )
             current_lr = float(optimizer.param_groups[0]["lr"])
             scheduler.step()
 
