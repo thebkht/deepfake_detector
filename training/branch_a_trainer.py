@@ -28,6 +28,25 @@ TARGET_BALANCED_ACCURACY = 0.77
 TARGET_F1 = 0.70
 
 
+def _format_duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+
+    rounded_seconds = max(0, int(seconds))
+    minutes, remaining_seconds = divmod(rounded_seconds, 60)
+    hours, remaining_minutes = divmod(minutes, 60)
+    if hours > 0:
+        return f"{hours:d}:{remaining_minutes:02d}:{remaining_seconds:02d}"
+    return f"{minutes:d}:{remaining_seconds:02d}"
+
+
+def _format_progress_bar(current: int, total: int, *, width: int = 12) -> str:
+    if total <= 0:
+        return "─" * width
+    filled = min(width, int(width * current / total))
+    return ("━" * filled) + ("─" * (width - filled))
+
+
 @dataclass
 class EpochResult:
     epoch: int
@@ -146,9 +165,16 @@ def _run_epoch(
         all_labels.append(labels.detach().cpu().numpy())
 
         running_loss = total_loss / total_examples
+        elapsed_seconds = time.perf_counter() - start
+        average_batch_seconds = elapsed_seconds / batch_index
+        batches_per_second = batch_index / elapsed_seconds if elapsed_seconds > 0 else 0.0
+        eta_seconds = average_batch_seconds * (num_batches - batch_index)
+        percent_complete = (100.0 * batch_index / num_batches) if num_batches > 0 else 0.0
         print(
-            f"\r  Epoch {epoch}/{total_epochs} | {split_name} {batch_index}/{num_batches} | "
-            f"loss: {running_loss:.4f}",
+            f"\r  Epoch {epoch}/{total_epochs} | {split_name} {percent_complete:3.0f}% "
+            f"{_format_progress_bar(batch_index, num_batches)} | "
+            f"loss: {running_loss:.4f} | {batches_per_second:.1f}it/s {_format_duration(elapsed_seconds)} "
+            f"< {_format_duration(eta_seconds)}",
             end=progress_end,
             flush=True,
         )
