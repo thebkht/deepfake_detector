@@ -150,7 +150,9 @@ Current status from the repository state:
 - **Known Week 1 limitation remains.** The current local dataset does **not** include `identity_CelebA.txt`, so real pairs still use the documented adjacent-index fallback instead of identity-based pairing during the recorded Branch A run.
 - **Farnebäck cache is already complete on this machine.** Verified on **2026-05-18**: `data/flow_cache` contains **202,599** `*_flow.pt` files with **0 missing / 0 extra** stems against `discover_celeba_images`, sample tensors have shape `(2, 64, 64)` and `float32` dtype, the cache occupies about **7.0 GB**, and `tests.test_data_pipeline.DataPipelineTestCase.test_flow_precompute_smoke` passes.
 - **Week 2 Branch C must preserve the cache contract.** Cached flow filenames are `{frame_a_stem}_flow.pt`, and each tensor is computed against the adjacent-index partner rule used by `data/precompute_flow.py` and the loader's `adjacent_fallback` path. If `identity_CelebA.txt` is introduced before Branch C wiring, either keep Branch C on adjacent-index pairing or regenerate the cache with identity-based partners before training.
-- **Week 2+ work is still open.** There is no implemented Branch B / Branch C stack, no ensemble training, and no completed OOD evaluation workflow in the repository yet.
+- **Week 2 Dev 1 code is now in place.** `models/branch_b.py`, `models/discriminator.py`, `training/phase2_trainer.py`, `training/phase2_train.py`, and `tests/test_model.py` now exist. Branch B's 8-D layout and acceleration proxy are locked by a golden regression test, and Phase 2 includes a real Branch A freeze test plus Phase 1 encoder load/remap coverage.
+- **Phase 2 is smoke-verified but not gate-cleared.** A short `phase2_a_b_smoke` run writes a Phase 2 checkpoint and benchmark summary with `phase == 2`, but the full 20-epoch `phase2_a_b.pt` training gate is still pending.
+- **Week 2+ work is still open beyond Dev 1.** Branch C, Phase 3+, ensemble training, and OOD evaluation are still not implemented in the repository.
 
 ### Milestones
 
@@ -178,7 +180,8 @@ Week 4 — Eval & Hardening (Phase 5)
 
 ### Week 2 — Branches B & C (parallel)
 
-- [ ] **Dev 1:** Implement `BranchB_Spatiotemporal` + `DiscriminatorPhase2` (Branch A frozen); train; target ≥88% accuracy; save `checkpoints/phase2_a_b.pt`
+- [x] **Dev 1:** Implement `BranchB_Spatiotemporal` + `DiscriminatorPhase2` (Branch A frozen); smoke-verify load/freeze/tests and Phase 2 training path
+- [ ] **Dev 1:** Run the full Phase 2 training job; target ≥88% accuracy; save `checkpoints/phase2_a_b.pt`
 - [ ] **Dev 2:** Finalize flow cache `.pt` files; implement `BranchC_Physics`; train with A+B frozen; target ≥83% accuracy; save `checkpoints/phase3_a_b_c.pt`; implement Hinge loss
 - [ ] **Dev 2:** Build balanced accuracy / F1 / AUC-ROC eval module; checkpoint save/resume
 
@@ -220,7 +223,7 @@ Two developers, four weeks, split by model vs. data/eval ownership.
 | Week | Tasks                                                                                                                                                                                                                    |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1    | Project scaffold, `config.yaml`, requirements, experiment tracking setup; `BranchA_CNN` + `DiscriminatorPhase1`; core training loop (`trainer.py`), BCE loss; unit tests; train Branch A; save `phase1_branch_a_best.pt` |
-| 2    | `BranchB_Spatiotemporal` + `DiscriminatorPhase2` (Branch A frozen); Phase 2 training script; train Branch B; save `phase2_a_b.pt`                                                                                        |
+| 2    | `BranchB_Spatiotemporal` + `DiscriminatorPhase2` (Branch A frozen); Phase 2 training script; smoke verification complete; full-gate Branch B training still pending; save `phase2_a_b.pt`                                  |
 | 3    | Full ensemble fine-tune, unfreeze all branches, BCE + Hinge combined loss tuning; save `phase4_ensemble.pt`                                                                                                              |
 | 4    | All 7 ensemble combination experiments; architecture review; support OOD eval                                                                                                                                            |
 

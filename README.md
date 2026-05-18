@@ -1,16 +1,20 @@
 # Hybrid Three-Branch Deepfake Detector
 
-This repository contains the early implementation of a deepfake face detection project built around a planned three-branch discriminator. The current codebase implements the Week 1 baseline only: a working Branch A spatial model, a CelebA pair dataset pipeline, an optical-flow precompute utility, and tests for the baseline training path.
+This repository contains the in-progress implementation of a deepfake face detection project built around a three-branch discriminator. The current codebase includes the full Week 1 baseline and the Week 2 Dev 1 Branch B / Phase 2 stack: a working Branch A spatial model, a working Branch B spatiotemporal branch, a frozen-Branch-A Phase 2 discriminator, the CelebA pair dataset pipeline, an optical-flow precompute utility, and tests for the current model and training paths.
 
 The long-term design is documented in [docs/master-plan.md](docs/master-plan.md), but the repository is not at full three-branch parity yet. The `README` below describes what is implemented now.
 
 ## Current Status
 
 - Implemented: Branch A baseline training on paired CelebA images
+- Implemented: Branch B spatiotemporal features and `DiscriminatorPhase2`
+- Implemented: Phase 2 A+B trainer CLI and checkpoint/report writing
 - Implemented: CelebA dataloader with real/fake pair construction
 - Implemented: offline Farneback optical-flow precompute utility
 - Implemented: metric computation, checkpointing, run summaries, and optional TensorBoard logging
-- Not implemented yet: Branch B, Branch C, and the final fused three-branch discriminator
+- Smoke-verified: Branch B regression tests, Branch A freeze tests, and a 1-epoch Phase 2 dry-run
+- Not implemented yet: Branch C, Phase 3+, and the final fused three-branch discriminator
+- Not completed yet: the full 20-epoch gate-clearing Phase 2 run that must write `checkpoints/phase2_a_b.pt`
 
 ## Repository Layout
 
@@ -28,32 +32,46 @@ deepfake_detector/
 ├── evaluation/
 │   └── metrics.py
 ├── models/
-│   └── branch_a.py
+│   ├── branch_a.py
+│   ├── branch_b.py
+│   └── discriminator.py
 ├── scripts/
 │   └── download_celeba.sh
 ├── tests/
 │   ├── test_bootstrap_and_imports.py
 │   ├── test_branch_a_baseline.py
-│   └── test_data_pipeline.py
+│   ├── test_data_pipeline.py
+│   └── test_model.py
 ├── training/
 │   ├── branch_a_trainer.py
+│   ├── phase2_trainer.py
 │   ├── tracker.py
-│   └── train_branch_a.py
+│   ├── train_branch_a.py
+│   └── phase2_train.py
 ├── pyrightconfig.json
 ├── requirements.txt
 └── README.md
 ```
 
-## Implemented Baseline
+## Implemented Models
 
-The current model in [models/branch_a.py](models/branch_a.py) is a Branch A baseline:
+The current codebase includes two model stages.
+
+Branch A in [models/branch_a.py](models/branch_a.py):
 
 - Input: two `64 x 64` RGB face frames
 - Encoder: five convolution blocks with spectral normalization and LeakyReLU
 - Classifier: concatenated twin-frame features passed through an MLP
 - Output: one real/fake logit for the frame pair
 
-This is a pair classifier, not a full GAN discriminator and not the final three-branch model described in the planning docs.
+Branch B and Phase 2 in [models/branch_b.py](models/branch_b.py) and [models/discriminator.py](models/discriminator.py):
+
+- `EmbedCNN`: tied lightweight 4-block CNN per frame, projected to a 64-D embedding
+- `BranchB_Spatiotemporal`: computes committed temporal proxies from `(frame_a, frame_b)`
+- Output layout: 8-D summary `[velocity(mean,std,max), curvature(mean,std,max), acceleration(mean,max)]`
+- `DiscriminatorPhase2`: frozen Branch A encoder on `frame_a` only, concatenated with Branch B's 8-D output, then fused through a `2056 -> 512 -> 128 -> 1` head
+
+The Phase 2 load path reuses only `encoder.*` weights from `checkpoints/phase1_branch_a_best.pt`; the Week 1 classifier head is discarded.
 
 ## Dataset Pipeline
 
@@ -92,6 +110,15 @@ Key defaults:
 - Scheduler: `CosineAnnealingLR`
 - Checkpoint metric: `balanced_accuracy`
 - Default checkpoint name: `phase1_branch_a_best.pt`
+
+The file now also contains a dedicated `phase2:` block:
+
+- Epochs: `20`
+- Learning rate: `2e-4`
+- Scheduler: `CosineAnnealingLR`
+- Pretrained Branch A checkpoint: `phase1_branch_a_best.pt`
+- Default Phase 2 checkpoint name: `phase2_a_b.pt`
+- Targets: balanced accuracy `>= 0.88`, F1 `>= 0.88`
 
 By default, outputs are written to:
 
@@ -143,7 +170,7 @@ The tests include explicit failure checks for missing Kaggle CLI and missing cre
 Run the baseline trainer:
 
 ```bash
-python -m training.train_branch_a --config config/config.yaml --run-name branch_a_baseline
+python3 -m training.train_branch_a --config config/config.yaml --run-name branch_a_baseline
 ```
 
 Useful flags:
@@ -157,7 +184,7 @@ Useful flags:
 Example short smoke run:
 
 ```bash
-python -m training.train_branch_a \
+python3 -m training.train_branch_a \
   --config config/config.yaml \
   --run-name smoke \
   --train-limit 512 \
@@ -166,12 +193,43 @@ python -m training.train_branch_a \
   --device cpu
 ```
 
+## Train Phase 2 A+B
+
+Run the Phase 2 trainer:
+
+```bash
+python3 -m training.phase2_train --config config/config.yaml --run-name phase2_a_b
+```
+
+Useful flags:
+
+- `--train-limit`: cap train samples for smoke runs
+- `--val-limit`: cap validation samples for smoke runs
+- `--epochs-override`: override configured epochs
+- `--max-batches`: cap batches per split for very short dry-runs
+- `--checkpoint-name-override`: avoid overwriting the final checkpoint during smoke runs
+- `--device cpu|cuda|mps`: force a device
+
+Example smoke run:
+
+```bash
+python3 -m training.phase2_train \
+  --config config/config.yaml \
+  --run-name phase2_a_b_smoke \
+  --train-limit 256 \
+  --val-limit 64 \
+  --epochs-override 1 \
+  --max-batches 2 \
+  --checkpoint-name-override phase2_a_b_smoke.pt \
+  --device cpu
+```
+
 ## Precompute Optical Flow
 
 The flow utility in [data/precompute_flow.py](data/precompute_flow.py) currently supports Farneback flow only.
 
 ```bash
-python -m data.precompute_flow \
+python3 -m data.precompute_flow \
   --img-dir data/celeba/img_align_celeba \
   --out-dir data/flow_cache \
   --method farneback \
@@ -188,12 +246,17 @@ The implemented evaluation in [evaluation/metrics.py](evaluation/metrics.py) rep
 - F1 score
 - Loss
 
-The trainer currently uses internal baseline targets:
+The Week 1 trainer uses baseline targets:
 
 - Balanced accuracy: `>= 0.77`
 - F1: `>= 0.70`
 
-Those targets are for the Week 1 noise-duplicate baseline only. They are not equivalent to a realistic deepfake benchmark.
+The Phase 2 trainer uses:
+
+- Balanced accuracy: `>= 0.88`
+- F1: `>= 0.88`
+
+These are still in-domain noise-duplicate gates, not realistic deepfake benchmarks.
 
 ## Tests
 
@@ -206,6 +269,10 @@ python -m unittest discover -s tests
 Coverage currently includes:
 
 - Branch A forward-pass shape checks
+- Branch B output shape and golden numerical regression
+- Phase 2 discriminator output shape
+- Branch A frozen-after-step verification for Phase 2
+- Phase 1 checkpoint load/remap verification for Phase 2
 - Metric computation sanity checks
 - Scheduler configuration checks
 - End-to-end training smoke test with checkpoint and report generation
@@ -216,18 +283,19 @@ Coverage currently includes:
 
 ## Limitations
 
-- Only Branch A is implemented.
+- Branch C and later ensemble phases are not implemented yet.
 - Current fake samples are Gaussian-noise duplicates, not actual deepfakes.
 - Out-of-domain evaluation is not implemented.
 - If `identity_CelebA.txt` is missing, real pairs fall back to adjacent-image pairing.
-- The planning docs describe a broader system than the code currently provides.
+- The full 20-epoch Phase 2 gate-clearing run is still pending.
+- The checked-in `.venv` may be stale; in this workspace `pytest` was not available in the active interpreter.
 
 ## Roadmap
 
 The planned next steps are:
 
-1. Implement Branch B temporal features.
+1. Run the full Phase 2 A+B training job and save a gate-clearing `phase2_a_b.pt`.
 2. Implement Branch C physics-based features from flow and photometrics.
-3. Add fusion training for the multi-branch classifier.
+3. Add Phase 3+ fusion training for the multi-branch classifier.
 4. Replace synthetic noise-duplicate negatives with stronger fake-generation sources.
 5. Add out-of-domain evaluation.

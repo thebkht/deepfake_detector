@@ -23,7 +23,7 @@
 | Phase | Where the repo is now | Next gate |
 | ----- | --------------------- | --------- |
 | 1 | CelebA at `data/celeba/img_align_celeba` (202,599 images); `BranchA_CNN` + `DiscriminatorPhase1` implemented; `phase1_branch_a_best.pt` saved — val balanced acc 1.0000, F1 1.0000 @ epoch 34; flow cache complete at `data/flow_cache` (202,599 `*_flow.pt` files, ~7.0 GB, shape `(2, 64, 64)` float32); `test_flow_precompute_smoke` passing; eval module skeleton in place | Implement Branch B (`branch_b.py`) and Branch C (`branch_c.py`); update `CelebAFramePairDataset` to return flow tensor; train both branches; save `phase2_a_b.pt` and `phase3_a_b_c.pt` |
-| 2 | No Branch B or Branch C implementation exists yet; `identity_CelebA.txt` is missing — loader uses adjacent-index fallback; Hinge loss not yet implemented; checkpoint resume not yet implemented | Train Branch B (Dev 1) and Branch C (Dev 2) in parallel; finalize eval module interface |
+| 2 | Branch B (`models/branch_b.py`) and Phase 2 discriminator/trainer are now implemented; golden regression and Branch A freeze/load tests were added in `tests/test_model.py`; `phase2_a_b_smoke` writes a Phase 2 checkpoint with `phase == 2`; `identity_CelebA.txt` is still missing so loader uses adjacent-index fallback; Branch C, Hinge loss, and checkpoint resume remain open; the full 20-epoch Phase 2 gate has not been run on this machine because only CPU is available | Run the full Phase 2 A+B training job to produce a gate-clearing `phase2_a_b.pt`, then continue Branch C / Phase 3 work |
 
 Update this table when a gate flips so the plan stays honest for the next work session.
 
@@ -107,19 +107,19 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel — no shared cod
 
 **Goal:** Branch B implemented and trained with Branch A frozen. `phase2_a_b.pt` saved.
 
-- [ ] Implement `BranchB_Spatiotemporal` (`models/branch_b.py`)
+- [x] Implement `BranchB_Spatiotemporal` (`models/branch_b.py`)
   - Shared embed CNN: `frame_t`, `frame_t1` → 64-D each (tied weights, independent forward passes); LeakyReLU(0.2)
   - `velocity = e_t1 − e_t` (64-D)
   - `curvature = velocity / ‖velocity‖` (64-D, L2-normalized)
   - `acceleration` ≈ second-order approximation (64-D)
   - Aggregate `(mean, std, max)` over each of the three quantities → **8-D output**
-- [ ] Implement `DiscriminatorPhase2` (`models/discriminator.py`)
+- [x] Implement `DiscriminatorPhase2` (`models/discriminator.py`)
   - Load `phase1_branch_a_best.pt`; set Branch A conv `requires_grad = False`
   - Concat `[branch_a_2048, branch_b_8]` → 2056-D into new fusion FC head (2056 → 512 → 128 → 1)
-- [ ] Write Phase 2 training script (`training/phase2_train.py`)
+- [x] Write Phase 2 training script (`training/phase2_train.py`)
   - Optimizer: Adam (β₁=0.5, β₂=0.999), LR = 2e-4; only Branch B + fusion head params
   - Scheduler: CosineAnnealingLR; 20 epochs, batch size 64; loss: BCE
-- [ ] Unit tests (`tests/test_model.py`)
+- [x] Unit tests (`tests/test_model.py`)
   - Branch B output shape `(B, 8)` ✓
   - Full Phase 2 forward pass output `(B, 1)` ✓
   - Branch A weights unchanged after optimizer step ✓
