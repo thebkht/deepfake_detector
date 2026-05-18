@@ -1,0 +1,339 @@
+# Hybrid Three-Branch GAN Discriminator — Build Plan
+
+> Last updated: 2026-05-18
+> Status: **Week 1 — complete** (Branch A trained; flow cache verified; eval module skeleton in place). **Week 2 — in progress** (Branch B and Branch C implementations open; flow loader update open).
+
+> **2 Engineers · 4 Weeks · OOD Robustness Target: 94.4% balanced accuracy**
+
+---
+
+## Overview
+
+| Phase | Week | Focus                       | Gate                                                            |
+| ----- | ---- | --------------------------- | --------------------------------------------------------------- |
+| 1     | 1    | Setup + Branch A            | Branch A val acc ≥ 77%, F1 ≥ 0.70; flow cache complete         |
+| 2     | 2    | Branches B & C (parallel)   | `phase2_a_b.pt` and `phase3_a_b_c.pt` both saved               |
+| 3     | 3    | Full ensemble fine-tune     | B+C ensemble ≥ 94.4% balanced acc, F1 ≥ 0.93                   |
+| 4     | 4    | Eval & hardening            | OOD eval complete; final report written                         |
+
+---
+
+## Progress snapshot (living)
+
+| Phase | Where the repo is now | Next gate |
+| ----- | --------------------- | --------- |
+| 1 | CelebA at `data/celeba/img_align_celeba` (202,599 images); `BranchA_CNN` + `DiscriminatorPhase1` implemented; `phase1_branch_a_best.pt` saved — val balanced acc 1.0000, F1 1.0000 @ epoch 34; flow cache complete at `data/flow_cache` (202,599 `*_flow.pt` files, ~7.0 GB, shape `(2, 64, 64)` float32); `test_flow_precompute_smoke` passing; eval module skeleton in place | Implement Branch B (`branch_b.py`) and Branch C (`branch_c.py`); update `CelebAFramePairDataset` to return flow tensor; train both branches; save `phase2_a_b.pt` and `phase3_a_b_c.pt` |
+| 2 | No Branch B or Branch C implementation exists yet; `identity_CelebA.txt` is missing — loader uses adjacent-index fallback; Hinge loss not yet implemented; checkpoint resume not yet implemented | Train Branch B (Dev 1) and Branch C (Dev 2) in parallel; finalize eval module interface |
+
+Update this table when a gate flips so the plan stays honest for the next work session.
+
+---
+
+## Delivery process
+
+**How this plan is used**
+
+- **Checklists** track scope; **gates** (Overview table) decide when to move to the next week. Do not start Week 3 ensemble work until both `phase2_a_b.pt` and `phase3_a_b_c.pt` exist and clear their gates.
+- **Checklist truthfulness:** when a commit materially completes a checklist item, update that checkbox in the same commit. Do not leave completed work unchecked because the broader week gate is still open.
+- **Dependency direction:** `data/` → `models/` → `training/` → `evaluation/`. Do not import training scripts from model modules.
+- **Vertical slices:** prefer a thin working slice (one branch implemented, wired into a training script, producing a checkpoint) over "all model code first, training later."
+- **Freeze discipline:** Branch A conv weights must be verifiably frozen before Phase 2 training begins. Add a unit test that confirms no weight change after an optimizer step. Same rule applies to Branch A + B before Phase 3.
+- **Cache contract:** cached flow filenames are `{frame_a_stem}_flow.pt`, computed against the adjacent-index partner rule used by `data/precompute_flow.py`. If `identity_CelebA.txt` is introduced, either keep Branch C on adjacent-index pairing or regenerate the cache before training. Do not silently break the stem mapping.
+- **Commit discipline:** land implementation in small commits by subsystem. Default split: shared data contract change, then model implementation, then training script, then tests. Each commit should answer: what boundary advanced, what verification was run.
+- **Docs move with the stage:** if a stage changes a runtime contract (e.g. `__getitem__` return signature), update this file's Progress snapshot and any affected docstrings in the same commit.
+
+**Local verification (before calling a task done)**
+
+- Model forward-pass tests: `python -m pytest tests/test_model.py -v`
+- Data loader tests: `python -m pytest tests/test_data.py -v` — includes `test_flow_precompute_smoke`
+- Training dry-run (2 batches): add `--max-batches 2` flag or equivalent guard before a full run
+- Checkpoint integrity: load the saved `.pt` and confirm the metric in `benchmark_summary.json` matches the training log
+
+**Definition of done (default)**
+
+- Unit tests pass for all affected modules.
+- Output shape assertion exists for every new branch: Branch B → `(B, 8)`, Branch C → `(B, 28)`.
+- No frozen branch weights change after an optimizer step — verified by test.
+- Checkpoint saved with epoch, `model_state_dict`, `optimizer_state_dict`, and best metric.
+- `runs/` log updated with the training run for the phase.
+- Progress snapshot updated when a gate flips.
+
+**Plan hygiene**
+
+- When a **gate** is met, update the **Progress snapshot** and the phase **Done when** if reality diverged from the original wording.
+- **End of each week:** note what shipped and what slipped — one short list in the progress snapshot is enough.
+
+---
+
+## Week 1 — Setup + Branch A `[COMPLETE]`
+
+### Dev 1 — Model & Training
+
+**Goal:** Branch A trains end-to-end. Checkpoint saved and gate-cleared.
+
+- [x] Project scaffold, `config.yaml`, `requirements.txt`
+- [x] Experiment tracking setup (TensorBoard or W&B)
+- [x] Implement `BranchA_CNN` (`models/branch_a.py`) — 5 conv blocks, SpectralNorm + BN, LeakyReLU(0.2) throughout, 2048-D flatten output
+- [x] Implement `DiscriminatorPhase1` (`models/discriminator.py`) — Branch A + fusion FC head (2048 → 512 → 128 → 1)
+- [x] Core training loop (`training/trainer.py`), BCE loss
+- [x] Unit tests: forward-pass output shape `(B, 1)`, no NaN activations
+- [x] Train Branch A — **val balanced acc 1.0000, F1 1.0000 @ epoch 34**
+- [x] Save `checkpoints/phase1_branch_a_best.pt` + `runs/branch_a_baseline/benchmark_summary.json`
+
+### Dev 2 — Data & Eval
+
+**Goal:** Dataset validated, flow cache complete, eval module interface defined.
+
+- [x] Validate CelebA: 202,599 images, 178×218 native resolution
+- [x] Implement `CelebAFramePairDataset` with adjacent-index fallback pairing (`data/celeba_loader.py`)
+- [x] Augmentation pipeline: random horizontal flip, ColorJitter (brightness ±0.1, contrast ±0.1, saturation ±0.05), normalize to [-1, 1]
+- [x] Data loader unit tests: shape checks, label balance, no NaN
+- [x] Launch Farnebäck flow pre-computation (`data/precompute_flow.py`)
+- [x] Flow cache verified: 202,599 files, 0 missing, 0 extra, shape `(2, 64, 64)` float32, ~7.0 GB
+- [x] `tests.test_data_pipeline.DataPipelineTestCase.test_flow_precompute_smoke` passing
+- [x] Eval module skeleton (`evaluation/eval.py`) — `compute_balanced_accuracy`, `compute_f1`, `compute_auc_roc` stubs defined
+
+**Done when:** `phase1_branch_a_best.pt` reports val balanced acc ≥ 77% and F1 ≥ 0.70 in `benchmark_summary.json`; flow cache contains exactly 202,599 files and smoke test passes.
+
+**Actual result:** acc 1.0000, F1 1.0000 — gate cleared.
+
+---
+
+## Week 2 — Branches B & C `[IN PROGRESS]`
+
+Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel — no shared code dependencies this week.
+
+### Dev 1 — Branch B (Spatiotemporal)
+
+**Goal:** Branch B implemented and trained with Branch A frozen. `phase2_a_b.pt` saved.
+
+- [ ] Implement `BranchB_Spatiotemporal` (`models/branch_b.py`)
+  - Shared embed CNN: `frame_t`, `frame_t1` → 64-D each (tied weights, independent forward passes); LeakyReLU(0.2)
+  - `velocity = e_t1 − e_t` (64-D)
+  - `curvature = velocity / ‖velocity‖` (64-D, L2-normalized)
+  - `acceleration` ≈ second-order approximation (64-D)
+  - Aggregate `(mean, std, max)` over each of the three quantities → **8-D output**
+- [ ] Implement `DiscriminatorPhase2` (`models/discriminator.py`)
+  - Load `phase1_branch_a_best.pt`; set Branch A conv `requires_grad = False`
+  - Concat `[branch_a_2048, branch_b_8]` → 2056-D into new fusion FC head (2056 → 512 → 128 → 1)
+- [ ] Write Phase 2 training script (`training/phase2_train.py`)
+  - Optimizer: Adam (β₁=0.5, β₂=0.999), LR = 2e-4; only Branch B + fusion head params
+  - Scheduler: CosineAnnealingLR; 20 epochs, batch size 64; loss: BCE
+- [ ] Unit tests (`tests/test_model.py`)
+  - Branch B output shape `(B, 8)` ✓
+  - Full Phase 2 forward pass output `(B, 1)` ✓
+  - Branch A weights unchanged after optimizer step ✓
+- [ ] Train Branch B; save `checkpoints/phase2_a_b.pt`
+
+**Gate:** val balanced acc ≥ 88%, F1 ≥ 0.88; Branch A freeze verified by test.
+
+---
+
+### Dev 2 — Branch C (Physics Dynamics)
+
+**Goal:** Branch C implemented and trained with Branch A + B frozen. `phase3_a_b_c.pt` saved.
+
+> **Cache contract:** do not rename or regenerate `*_flow.pt` files during this week unless `identity_CelebA.txt` is explicitly introduced and cache regeneration is intentional. Keep Branch C on adjacent-index pairing to match the existing cache.
+
+- [ ] Update `CelebAFramePairDataset.__getitem__` to return `(frame_t, frame_t1, flow_tensor, label)`
+  - Load `{frame_a_stem}_flow.pt` from `data/flow_cache/`
+  - Unit test: returned flow tensor shape `(2, 64, 64)` ✓, no NaN ✓
+- [ ] Implement `BranchC_Physics` (`models/branch_c.py`)
+  - **Optical flow features (20-D):** load cached dx/dy tensor; compute divergence, curl, gradient magnitude per pixel; aggregate `(mean, std, max, min, range)` over each → 15-D; global stats (mean magnitude, max magnitude, dominant direction histogram bins) → 5-D
+  - **HSV photometrics (8-D):** convert `frame_t` and `frame_t1` from [-1,1] to [0,1] → RGB → HSV; per frame: `(mean_H, std_H, mean_S, mean_V)` → 4-D × 2 frames = 8-D
+  - **Total: 28-D output**
+- [ ] Implement `DiscriminatorPhase3` (`models/discriminator.py`)
+  - Load `phase2_a_b.pt`; freeze Branch A + Branch B (`requires_grad = False`)
+  - Concat `[branch_a_2048, branch_b_8, branch_c_28]` → 2084-D into new fusion FC head (2084 → 512 (LeakyReLU + Dropout(0.3)) → 128 (LeakyReLU) → 1)
+- [ ] Implement Hinge loss (`training/losses.py`)
+  - `L_hinge = E[max(0, 1 − D(x))] + E[max(0, 1 + D(G(z)))]`
+- [ ] Write Phase 3 training script (`training/phase3_train.py`)
+  - Optimizer: Adam (β₁=0.5, β₂=0.999), LR = 2e-4; only Branch C + fusion head params
+  - Scheduler: CosineAnnealingLR; 20 epochs, batch size 64; loss: BCE
+- [ ] Implement checkpoint save/resume (`training/trainer.py`)
+  - Save: epoch, `model_state_dict`, `optimizer_state_dict`, best metric
+  - Resume: `--resume checkpoints/<path>.pt`
+- [ ] Finalize eval module (`evaluation/eval.py`) — replace stubs with real implementations; add `plot_confusion_matrix(y_true, y_pred, save_path)`
+- [ ] Unit tests (`tests/test_model.py`, `tests/test_data.py`)
+  - Branch C output shape `(B, 28)` ✓
+  - Full Phase 3 forward pass output `(B, 1)` ✓
+  - Branch A + B weights unchanged after Phase 3 optimizer step ✓
+- [ ] Train Branch C; save `checkpoints/phase3_a_b_c.pt`
+
+**Gate:** val balanced acc ≥ 83%, F1 ≥ 0.80; Branch A + B freeze verified by test; flow cache still contains exactly 202,599 files after the run.
+
+---
+
+### Week 2 Critical Sync Point
+
+> **End of Week 2** — `phase2_a_b.pt` (Dev 1) and `phase3_a_b_c.pt` (Dev 2) must both exist before any Week 3 work begins. Dev 1 hands off the Branch B checkpoint immediately on save so Dev 2 can begin RF ensemble prep in parallel with Dev 1's fine-tune work.
+
+---
+
+## Week 3 — Full Ensemble Fine-tune
+
+### Dev 1 — End-to-End Fine-tune
+
+**Goal:** All branches unfrozen and fine-tuned together. `phase4_ensemble.pt` saved.
+
+- [ ] Implement `HybridDiscriminator` (`models/discriminator.py`)
+  - Load `phase3_a_b_c.pt`; unfreeze all branches
+  - Final fusion FC head: 2084 → 512 (LeakyReLU + Dropout(0.3)) → 128 (LeakyReLU) → 1
+- [ ] Implement combined loss (`training/losses.py`): `L_total = 0.7 × L_BCE + 0.3 × L_hinge`
+- [ ] Write Phase 4 fine-tune script (`training/phase4_finetune.py`)
+  - All parameters trainable; Optimizer: Adam (β₁=0.5, β₂=0.999), LR = **5e-5**
+  - Scheduler: CosineAnnealingLR; 20 epochs, batch size 64; combined loss
+- [ ] Train full ensemble; save `checkpoints/phase4_ensemble.pt`
+- [ ] Run all 7 ensemble combination experiments (see table below)
+- [ ] Prepare inference script for OOD eval — loads any checkpoint, accepts image directory
+
+**Ensemble experiment matrix:**
+
+| # | Branches | Classifier |
+| - | -------- | ---------- |
+| 1 | A only | Logistic on logit |
+| 2 | B only | Logistic on logit |
+| 3 | C only | Logistic on logit |
+| 4 | A + B | Random Forest |
+| 5 | A + C | Random Forest |
+| **6** | **B + C** | **Random Forest** ⭐ |
+| 7 | A + B + C | Random Forest |
+
+**Gate:** B+C ensemble val balanced acc ≥ 94.4%, F1 ≥ 0.93.
+
+---
+
+### Dev 2 — RF Ensemble + Ablation
+
+**Goal:** RF classifiers trained for all 7 configs. Per-branch ablation and confusion matrix output complete.
+
+- [ ] Implement `evaluation/ensemble.py`
+  - `extract_branch_logits(model, dataloader, branch) -> np.ndarray` — shape `(N,)`
+  - `train_rf_ensemble(features, labels) -> RandomForestClassifier` — `n_estimators=100, random_state=42`
+  - `evaluate_ensemble(clf, features, labels) -> dict` — balanced acc, F1, AUC-ROC
+- [ ] Run RF ensemble for all 7 branch combinations on held-out test split
+- [ ] Per-branch ablation: forward each branch independently, zero others, compute balanced acc / F1 / AUC-ROC
+- [ ] Save confusion matrices for all 7 configs to `runs/ensemble_ablation/`
+
+**Done when:** All 7 experiment results are logged; B+C RF ensemble clears the gate; ablation table is written to `runs/ensemble_ablation/`.
+
+---
+
+## Week 4 — Eval & Hardening
+
+### Dev 1 — Architecture Review + Experiment Support
+
+- [ ] Finalize all 7 ensemble results table; confirm B+C is the deployment-recommended config
+- [ ] Architecture review: no orphaned branches, no unbounded tensor ops, no missing gradient guards
+- [ ] Support OOD eval — load `phase4_ensemble.pt` via inference script, accept image dir, output per-image scores
+
+### Dev 2 — OOD Eval, Profiling, Report
+
+**OOD evaluation (`evaluation/ood_eval.py`):**
+
+- [ ] Assemble OOD test sets: style-transferred faces, face reenactment outputs (e.g. First Order Motion Model), diffusion-based face synthesis (e.g. Stable Diffusion inpainting)
+- [ ] Implement `evaluate_ood(model, ood_dataloader, config) -> dict` — balanced acc, F1, AUC-ROC, confusion matrix per OOD category
+- [ ] Run B+C ensemble on all OOD categories
+- [ ] Run Branch A baseline on same OOD sets for comparison
+
+**Inference profiling:**
+
+- [ ] Profile forward pass latency per branch (CPU + GPU): Branch A ms/image, Branch B (embed × 2 + delta) ms/image, Branch C (flow load + feature extraction) ms/image, full ensemble ms/image
+- [ ] If flow pre-compute is a bottleneck: parallelize with `multiprocessing.Pool`; evaluate CUDA Farnebäck if GPU is available
+
+**Final eval report:**
+
+- [ ] Consolidated results table — all 7 ensemble configs × in-domain + all OOD categories
+- [ ] Per-branch ablation table
+- [ ] Confusion matrices (in-domain + per OOD category)
+- [ ] Inference time profile
+- [ ] Deployment recommendation: **B+C ensemble** confirmed as production config with written rationale
+
+**Done when:** OOD eval complete for all three OOD categories; final report written and committed to `docs/`; inference profile logged to `runs/`.
+
+---
+
+## Architecture Reference
+
+### Branch Dimensions
+
+| Branch | Dim | Signal |
+| ------ | --- | ------ |
+| A — CNN Spatial | 2048-D | Static texture & structure (5 conv blocks, SpectralNorm + BN) |
+| B — Spatiotemporal | 8-D | Velocity, curvature, acceleration summary stats over embed delta |
+| C — Physics Dynamics | 28-D | Optical flow div/curl/grad (20-D) + HSV photometrics (8-D) |
+| **Concatenated** | **2084-D** | Fusion FC input |
+
+### Hyperparameters
+
+| Parameter | Phases 1–3 | Phase 4 |
+| --------- | ---------- | ------- |
+| Optimizer | Adam (β₁=0.5, β₂=0.999) | same |
+| Learning rate | 2e-4 | **5e-5** |
+| Batch size | 64 | 64 |
+| Epochs | 20 | 20 |
+| Scheduler | CosineAnnealingLR | same |
+| Loss | BCE | 0.7 × BCE + 0.3 × Hinge |
+| Dropout (fusion) | 0.3 | 0.3 |
+
+---
+
+## Checkpoint Registry
+
+| File | Phase | Contents | Gate |
+| ---- | ----- | -------- | ---- |
+| `phase1_branch_a_best.pt` | 1 | Branch A conv + FC | acc ≥ 77%, F1 ≥ 0.70 ✅ |
+| `phase2_a_b.pt` | 2 | Branch A (frozen) + Branch B + FC | acc ≥ 88%, F1 ≥ 0.88 |
+| `phase3_a_b_c.pt` | 3 | A + B (frozen) + Branch C + FC | acc ≥ 83%, F1 ≥ 0.80 |
+| `phase4_ensemble.pt` | 4 | All branches unfrozen, fine-tuned | B+C ≥ 94.4%, F1 ≥ 0.93 |
+
+---
+
+## Expected Final Results
+
+| Configuration | Auth % | Synth % | F1 | Notes |
+| ------------- | ------ | ------- | -- | ----- |
+| Branch A only | 77.8% | 77.8% | 0.70 | Phase 1 gate |
+| Branch B only | 88.9% | 94.4% | 0.91 | |
+| Branch C only | 83.3% | 83.3% | 0.80 | |
+| A + B | 89.5% | 89.5% | 0.88 | |
+| A + C | 88.9% | 88.9% | 0.85 | |
+| **B + C** | **94.4%** | **94.4%** | **0.93** | ⭐ Deploy target |
+| A + B + C | 89.5% | 89.5% | 0.86 | Branch A dilutes OOD robustness |
+
+> Branch A introduces in-distribution bias that degrades OOD performance when added to the B+C ensemble. B+C is the deployment-recommended configuration.
+
+---
+
+## Risk Register
+
+| Risk | Likelihood | Impact | Mitigation |
+| ---- | ---------- | ------ | ---------- |
+| Branch A dominates gradients in Phase 4 | High | High | Phased freeze ensures independent feature learning; gradient scaling if Phase 4 still shows Branch A dominance |
+| `identity_CelebA.txt` introduced mid-cache | Medium | High | Keep Branch C on adjacent-index pairing OR regenerate cache before Phase 3 training; never silently mix pairing strategies |
+| Branch B embed CNN co-adapts with Branch A during Phase 2 | Medium | Medium | Branch A strictly frozen; unit test enforces this before any Phase 2 training run |
+| Flow cache corrupted or stems mismatched | Low | High | `test_flow_precompute_smoke` must pass before Phase 3 train; verify file count after every run |
+| OOD test sets unavailable in Week 4 | Medium | Medium | Source and stage OOD data during Week 3 in parallel with ensemble training |
+| Overfitting to CelebA in Phase 4 | Medium | High | OOD eval mandatory before Phase 4 sign-off; do not close Week 4 without OOD numbers |
+
+---
+
+## Standing Rules
+
+- **Freeze before you train.** No phase training begins without a passing unit test confirming prior branch weights are frozen.
+- **Cache contract is inviolable.** `{frame_a_stem}_flow.pt`, shape `(2, 64, 64)`, adjacent-index partner rule. Any deviation is an explicit decision requiring cache regeneration.
+- **B+C is the deployment config.** Do not optimize A+B+C metrics at the cost of B+C robustness.
+- **OOD eval is not optional.** Week 4 is not done until OOD numbers exist for all three OOD categories.
+- **Checkpoints are the handoff artifact.** Each week ends with a saved checkpoint. If the gate is not cleared, the checkpoint is still saved and the miss is noted in the progress snapshot.
+- **One training script per phase.** Do not fold phases into one script; each script is its own audit trail.
+
+---
+
+## Weekly rhythm
+
+| Day | Activity |
+| --- | -------- |
+| **Monday** | Review prior week gate; pick concrete tasks for the week; confirm prior checkpoint loads cleanly before writing new code |
+| **Wednesday** | Mid-week check — if a branch is not converging, decide to adjust LR or descope; do not let one failing branch block the other |
+| **Thursday** | Integrate risky pieces (freeze tests, data loader contract changes) so Friday is not the first time they run together |
+| **Friday** | Full training dry-run or checkpoint validation on physical hardware; update **Progress snapshot**; note what shipped / slipped |
