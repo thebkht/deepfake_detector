@@ -235,11 +235,10 @@ Two developers, four weeks, split by model vs. data/eval ownership.
 
 ### 4-Week Timeline
 
-```
-         Week 1                   Week 2                 Week 3                 Week 4
-Dev 1  │ Scaffold+BranchA+Train  │ Branch B             │ Ensemble fine-tune   │ Ensemble experiments
-Dev 2  │ Data+flow ↻ +eval module│ Flow cache+Branch C  │ RF ensemble+ablation │ OOD+profiling+report
-```
+| Team | Week 1 | Week 2 | Week 3 | Week 4 |
+| ---- | ------ | ------ | ------ | ------ |
+| Dev 1 | Scaffold + Branch A + Train | Branch B | Ensemble fine-tune | Ensemble experiments |
+| Dev 2 | Data + flow + eval module | Flow cache + Branch C | RF ensemble + ablation | OOD + profiling + report |
 
 ### Critical Sync Points
 
