@@ -47,7 +47,7 @@ training:
     enable_loss_ceiling: true
 
 phase2:
-  epochs: 30
+  epochs: 20
   learning_rate: 0.00015
   optimizer: adam
   betas:
@@ -59,7 +59,7 @@ phase2:
   weight_decay: 0.0001
   checkpoint_metric: balanced_accuracy
   seed: 42
-  checkpoint_name: phase2_a_b.pt
+  checkpoint_name: phase2_a_b_b32.pt
   pretrained_branch_a: phase1_branch_a_best.pt
   targets:
     balanced_accuracy: 0.88
