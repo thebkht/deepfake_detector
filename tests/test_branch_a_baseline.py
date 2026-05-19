@@ -111,4 +111,4 @@ class BranchABaselineTestCase(unittest.TestCase):
 
         saved_summary = json.loads(summary_path.read_text(encoding="utf-8"))
         self.assertEqual(saved_summary["checkpoint_selection_rule"], "highest validation balanced accuracy")
-        self.assertIn("noise-duplicate samples, not GAN-generated fakes.", saved_summary["limitations"][1])
+        self.assertIn("cross-identity proxy negatives", saved_summary["limitations"][1])

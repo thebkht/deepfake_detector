@@ -21,11 +21,13 @@ from torch.utils.data import DataLoader
 from data.celeba_loader import create_celeba_dataloader, load_config
 from evaluation import compute_binary_classification_metrics
 from models import BranchABaseline
+from training.overfit_stop import OverfitStopConfig, OverfitStopMonitor
 from training.tracker import Tracker
 
 
 TARGET_BALANCED_ACCURACY = 0.77
 TARGET_F1 = 0.70
+BRANCH_A_VAL_LOSS_CEILING = 0.35
 
 
 def _format_duration(seconds: float) -> str:
@@ -109,6 +111,23 @@ def _build_scheduler(optimizer: Adam, training_cfg: Dict[str, Any]) -> CosineAnn
     if scheduler_name != "CosineAnnealingLR":
         raise ValueError(f"Unsupported scheduler for Week 1 baseline: {scheduler_name}")
     return CosineAnnealingLR(optimizer, T_max=int(training_cfg["scheduler_t_max"]))
+
+
+def _resolve_early_stopping(training_cfg: Dict[str, Any]) -> OverfitStopConfig:
+    raw = training_cfg.get("early_stopping")
+    if raw is None:
+        return OverfitStopConfig(val_loss_ceiling=BRANCH_A_VAL_LOSS_CEILING)
+    early_cfg = _as_str_key_mapping(raw, context="training.early_stopping")
+    return OverfitStopConfig(
+        patience_overfit=int(early_cfg.get("patience_overfit", 5)),
+        patience_ceiling=int(early_cfg.get("patience_ceiling", 3)),
+        warmup_epochs=int(early_cfg.get("warmup_epochs", 3)),
+        val_loss_ceiling=_as_float(
+            early_cfg.get("val_loss_ceiling", BRANCH_A_VAL_LOSS_CEILING),
+            context="training.early_stopping.val_loss_ceiling",
+        ),
+        enable_loss_ceiling=bool(early_cfg.get("enable_loss_ceiling", True)),
+    )
 
 
 def _resolve_device(device_override: Optional[str] = None) -> torch.device:
@@ -234,12 +253,15 @@ def _build_summary_payload(
     best_epoch: int,
     device: torch.device,
     run_dir: Path,
+    stop_reason: Optional[str],
 ) -> Dict[str, Any]:
     return {
         "run_dir": str(run_dir),
         "device": str(device),
         "checkpoint_selection_rule": "highest validation balanced accuracy",
         "best_epoch": best_epoch,
+        "stopped_early": stop_reason is not None,
+        "stop_reason": stop_reason,
         "best_validation_metrics": {
             "balanced_accuracy": best_metrics["balanced_accuracy"],
             "f1": best_metrics["f1"],
@@ -260,9 +282,8 @@ def _build_summary_payload(
         },
         "limitations": [
             "Branch A only.",
-            "Fake pairs are noise-duplicate samples, not GAN-generated fakes.",
-            "This benchmark is likely optimistic relative to real deepfake detection.",
-            "The local dataset currently lacks identity_CelebA.txt, so real pairs use adjacent fallback.",
+            "Fake pairs are cross-identity proxy negatives or distant-index fallbacks, not actual deepfakes.",
+            "This benchmark is still a proxy task and likely optimistic relative to real deepfake detection.",
             "No out-of-domain benchmark is included in Week 1.",
             "With a 100-epoch run, the best checkpoint may occur well before epoch 100 if overfitting appears.",
         ],
@@ -282,11 +303,13 @@ def _write_summary_files(run_dir: Path, payload: Dict[str, Any]) -> None:
                 f"- Device: `{payload['device']}`",
                 f"- Checkpoint selection: {payload['checkpoint_selection_rule']}",
                 f"- Best epoch: `{payload['best_epoch']}`",
+                f"- Stopped early: `{payload['stopped_early']}`",
                 f"- Best validation balanced accuracy: `{payload['best_validation_metrics']['balanced_accuracy']:.4f}`",
                 f"- Best validation F1: `{payload['best_validation_metrics']['f1']:.4f}`",
                 f"- Best validation loss: `{payload['best_validation_metrics']['loss']:.4f}`",
                 f"- Target balanced accuracy: `>= {payload['targets']['balanced_accuracy']:.2f}`",
                 f"- Target F1: `>= {payload['targets']['f1']:.2f}`",
+                *([f"- Stop reason: {payload['stop_reason']}"] if payload["stop_reason"] else []),
                 "",
                 "## Hyperparameters",
                 "",
@@ -362,14 +385,17 @@ def _print_training_footer(
     run_dir: Path,
     checkpoint_path: Path,
     summary_payload: Dict[str, Any],
+    completed_epochs: int,
 ) -> None:
-    print(f"\n{total_epochs} epochs completed in {total_duration_seconds / 3600:.3f} hours.", flush=True)
+    print(f"\n{completed_epochs}/{total_epochs} epochs completed in {total_duration_seconds / 3600:.3f} hours.", flush=True)
     print(f"Results saved to {run_dir}", flush=True)
     print("\nTraining complete", flush=True)
     print(f"Best checkpoint : {checkpoint_path}", flush=True)
     print(f"Selected ckpt  : {checkpoint_path}", flush=True)
     print(f"Top-1 accuracy : {summary_payload['best_validation_metrics']['balanced_accuracy']}", flush=True)
     print(f"Top-5 accuracy : {summary_payload['best_validation_metrics']['f1']}", flush=True)
+    if summary_payload["stop_reason"]:
+        print(f"Stop reason    : {summary_payload['stop_reason']}", flush=True)
     print(f"Report saved   : {run_dir / 'benchmark_summary.json'}", flush=True)
 
 
@@ -415,6 +441,9 @@ def train_branch_a(
     history: list[EpochResult] = []
     best_epoch = 0
     best_metrics: Optional[Dict[str, float]] = None
+    stop_reason: Optional[str] = None
+    completed_epochs = 0
+    overfit_monitor = OverfitStopMonitor(_resolve_early_stopping(training_cfg))
     _print_run_header(
         run_name=run_name,
         device=device,
@@ -509,6 +538,16 @@ def train_branch_a(
                 best_epoch=best_epoch,
                 best_metrics=cast(Dict[str, float], best_metrics),
             )
+            completed_epochs = epoch
+            stop_decision = overfit_monitor.update(
+                epoch=epoch,
+                train_loss=train_metrics["loss"],
+                val_loss=val_metrics["loss"],
+            )
+            if stop_decision.should_stop:
+                stop_reason = stop_decision.reason
+                print(stop_reason, flush=True)
+                break
     finally:
         if tracker is not None:
             tracker.flush()
@@ -525,6 +564,7 @@ def train_branch_a(
         best_epoch=best_epoch,
         device=device,
         run_dir=run_dir,
+        stop_reason=stop_reason,
     )
     _write_summary_files(run_dir, summary_payload)
     _print_training_footer(
@@ -533,5 +573,6 @@ def train_branch_a(
         run_dir=run_dir,
         checkpoint_path=checkpoint_path,
         summary_payload=summary_payload,
+        completed_epochs=completed_epochs,
     )
     return summary_payload

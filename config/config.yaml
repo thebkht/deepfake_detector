@@ -39,6 +39,12 @@ training:
   checkpoint_metric: balanced_accuracy
   seed: 42
   checkpoint_name: phase1_branch_a_best.pt
+  early_stopping:
+    patience_overfit: 5
+    patience_ceiling: 3
+    warmup_epochs: 3
+    val_loss_ceiling: 0.35
+    enable_loss_ceiling: true
 
 phase2:
   epochs: 20
@@ -57,3 +63,9 @@ phase2:
   targets:
     balanced_accuracy: 0.88
     f1: 0.88
+  early_stopping:
+    patience_overfit: 5
+    patience_ceiling: 3
+    warmup_epochs: 3
+    val_loss_ceiling: 0.40
+    enable_loss_ceiling: true
