@@ -30,7 +30,9 @@ from training.branch_a_trainer import (
     _format_progress_bar,
     _resolve_device,
 )
+from training.batch_preview import maybe_save_train_preview, maybe_save_val_previews
 from training.overfit_stop import OverfitStopConfig, OverfitStopMonitor
+from training.run_artifacts import write_confusion_matrix_artifacts, write_results_plot
 from training.tracker import Tracker
 
 
@@ -106,6 +108,8 @@ def _run_epoch(
     total_epochs: int = 1,
     split_name: str = "train",
     max_batches: Optional[int] = None,
+    run_dir: Optional[Path] = None,
+    include_predictions: bool = False,
 ) -> Dict[str, float]:
     is_train = optimizer is not None
     model.train(is_train)
@@ -134,6 +138,24 @@ def _run_epoch(
             if is_train:
                 loss.backward()
                 optimizer.step()
+
+        if run_dir is not None:
+            preview_batch_index = batch_index - 1
+            if is_train:
+                maybe_save_train_preview(
+                    run_dir=run_dir,
+                    batch_index=preview_batch_index,
+                    frame_a=frame_a,
+                    labels=labels,
+                )
+            else:
+                maybe_save_val_previews(
+                    run_dir=run_dir,
+                    batch_index=preview_batch_index,
+                    frame_a=frame_a,
+                    labels=labels,
+                    logits=logits,
+                )
 
         batch_size = labels.size(0)
         total_examples += batch_size
@@ -170,6 +192,9 @@ def _run_epoch(
     metrics = compute_binary_classification_metrics(logits=logits, labels=labels, average_loss=average_loss)
     metrics["duration_seconds"] = time.perf_counter() - start
     metrics["num_batches"] = float(num_batches)
+    if include_predictions:
+        metrics["logits"] = logits
+        metrics["labels"] = labels
     return metrics
 
 
@@ -404,6 +429,8 @@ def train_phase2(
     history: list[EpochResult] = []
     best_epoch = 0
     best_metrics: Optional[Dict[str, float]] = None
+    best_val_logits: Optional[np.ndarray] = None
+    best_val_labels: Optional[np.ndarray] = None
     stop_reason: Optional[str] = None
     completed_epochs = 0
     overfit_monitor = OverfitStopMonitor(_resolve_early_stopping(phase2_cfg))
@@ -426,6 +453,7 @@ def train_phase2(
                 total_epochs=int(phase2_cfg["epochs"]),
                 split_name="train",
                 max_batches=max_batches,
+                run_dir=run_dir,
             )
             val_metrics = _run_epoch(
                 model,
@@ -436,6 +464,8 @@ def train_phase2(
                 total_epochs=int(phase2_cfg["epochs"]),
                 split_name="val",
                 max_batches=max_batches,
+                run_dir=run_dir,
+                include_predictions=True,
             )
             current_lr = float(optimizer.param_groups[0]["lr"])
             scheduler.step()
@@ -478,6 +508,8 @@ def train_phase2(
             if should_replace:
                 best_metrics = val_metrics
                 best_epoch = epoch
+                best_val_logits = np.asarray(val_metrics["logits"]).copy()
+                best_val_labels = np.asarray(val_metrics["labels"]).copy()
                 torch.save(
                     {
                         "phase": 2,
@@ -521,8 +553,17 @@ def train_phase2(
 
     if best_metrics is None:
         raise RuntimeError("Training completed without producing validation metrics")
+    if best_val_logits is None or best_val_labels is None:
+        raise RuntimeError("Training completed without preserving best validation predictions")
 
     _serialize_history(run_dir / "metrics_history.json", history)
+    write_confusion_matrix_artifacts(
+        run_dir,
+        labels=best_val_labels,
+        logits=best_val_logits,
+        class_names=("real", "fake"),
+    )
+    write_results_plot(run_dir, history)
     summary_payload = _build_summary_payload(
         config=config,
         phase2_cfg=phase2_cfg,

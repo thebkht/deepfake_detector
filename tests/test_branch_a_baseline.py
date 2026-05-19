@@ -103,10 +103,16 @@ class BranchABaselineTestCase(unittest.TestCase):
         checkpoint_path = self.root / "checkpoints" / "phase1_branch_a_best.pt"
         summary_path = self.root / "runs" / "smoke" / "benchmark_summary.json"
         history_path = self.root / "runs" / "smoke" / "metrics_history.json"
+        confusion_path = self.root / "runs" / "smoke" / "confusion_matrix.png"
+        confusion_norm_path = self.root / "runs" / "smoke" / "confusion_matrix_normalized.png"
+        results_path = self.root / "runs" / "smoke" / "results.png"
 
         self.assertTrue(checkpoint_path.exists())
         self.assertTrue(summary_path.exists())
         self.assertTrue(history_path.exists())
+        self.assertTrue(confusion_path.exists())
+        self.assertTrue(confusion_norm_path.exists())
+        self.assertTrue(results_path.exists())
         self.assertIn(summary["status"], {"met", "partially met", "not met"})
         self.assertEqual(summary["hyperparameters"]["scheduler_t_max"], 100)
 
@@ -123,11 +129,14 @@ class BranchABaselineTestCase(unittest.TestCase):
             device_override="cpu",
         )
         run_dir = self.root / "runs" / "branch_a_test_eval"
-        json_path = run_dir / "branch_a_test_confusion_matrix.json"
-        md_path = run_dir / "branch_a_test_confusion_matrix.md"
+        json_path = run_dir / "confusion_matrix.json"
+        png_path = run_dir / "confusion_matrix.png"
+        md_path = run_dir / "eval_report.md"
 
         self.assertEqual(results["split"], "test")
         self.assertTrue(json_path.exists())
+        self.assertTrue(png_path.exists())
         self.assertTrue(md_path.exists())
         saved_results = json.loads(json_path.read_text(encoding="utf-8"))
         self.assertEqual(set(saved_results["confusion_matrix"].keys()), {"tn", "fp", "fn", "tp"})
+        self.assertIn("auc_roc", saved_results)
