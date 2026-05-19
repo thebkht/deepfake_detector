@@ -8,7 +8,8 @@ from typing import Any, Dict, Optional, cast
 
 import numpy as np
 import torch
-from sklearn.metrics import confusion_matrix
+from PIL import Image, ImageDraw
+from sklearn.metrics import confusion_matrix, roc_auc_score
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -83,8 +84,11 @@ def _run_evaluation_epoch(
     probabilities = 1.0 / (1.0 + np.exp(-logits))
     predictions = (probabilities >= 0.5).astype(np.int64)
     matrix = confusion_matrix(labels, predictions, labels=[0, 1])
+    auc_roc = float(roc_auc_score(labels, probabilities))
     return {
         "metrics": metrics,
+        "auc_roc": auc_roc,
+        "matrix_values": matrix.tolist(),
         "confusion_matrix": {
             "tn": int(matrix[0, 0]),
             "fp": int(matrix[0, 1]),
@@ -109,11 +113,15 @@ def _write_eval_reports(
         "device": str(device),
         "num_examples": results["num_examples"],
         "metrics": results["metrics"],
+        "auc_roc": results["auc_roc"],
         "confusion_matrix": results["confusion_matrix"],
     }
-    json_path = run_dir / "branch_a_test_confusion_matrix.json"
-    md_path = run_dir / "branch_a_test_confusion_matrix.md"
+    json_path = run_dir / "confusion_matrix.json"
+    png_path = run_dir / "confusion_matrix.png"
+    md_path = run_dir / "eval_report.md"
     json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    matrix = np.array(results["matrix_values"], dtype=np.int64)
+    _write_confusion_matrix_png(png_path, matrix)
     md_path.write_text(
         "\n".join(
             [
@@ -125,6 +133,7 @@ def _write_eval_reports(
                 f"- Num examples: `{payload['num_examples']}`",
                 f"- Balanced accuracy: `{payload['metrics']['balanced_accuracy']:.4f}`",
                 f"- F1: `{payload['metrics']['f1']:.4f}`",
+                f"- AUC-ROC: `{payload['auc_roc']:.4f}`",
                 f"- Loss: `{payload['metrics']['loss']:.4f}`",
                 "",
                 "## Confusion Matrix",
@@ -138,6 +147,44 @@ def _write_eval_reports(
         + "\n",
         encoding="utf-8",
     )
+
+
+def _write_confusion_matrix_png(path: Path, matrix: np.ndarray) -> None:
+    canvas_width = 420
+    canvas_height = 360
+    left_margin = 110
+    top_margin = 70
+    cell_size = 90
+    image = Image.new("RGB", (canvas_width, canvas_height), color="white")
+    draw = ImageDraw.Draw(image)
+    max_value = max(1, int(matrix.max()))
+    labels = ["Real", "Fake"]
+
+    draw.text((110, 20), "Branch A Test Confusion Matrix", fill="black")
+    draw.text((185, 45), "Predicted", fill="black")
+    draw.text((18, 150), "Actual", fill="black")
+
+    for col_idx, label in enumerate(labels):
+        x = left_margin + col_idx * cell_size + 22
+        draw.text((x, top_margin - 25), label, fill="black")
+
+    for row_idx, label in enumerate(labels):
+        y = top_margin + row_idx * cell_size + 35
+        draw.text((left_margin - 55, y), label, fill="black")
+
+    for row_idx in range(2):
+        for col_idx in range(2):
+            value = int(matrix[row_idx, col_idx])
+            intensity = int(255 - (170 * (value / max_value)))
+            fill = (intensity, intensity, 255)
+            x0 = left_margin + col_idx * cell_size
+            y0 = top_margin + row_idx * cell_size
+            x1 = x0 + cell_size
+            y1 = y0 + cell_size
+            draw.rectangle((x0, y0, x1, y1), fill=fill, outline="black", width=2)
+            draw.text((x0 + 36, y0 + 36), str(value), fill="black")
+
+    image.save(path)
 
 
 def evaluate_branch_a_checkpoint(
@@ -189,5 +236,6 @@ def evaluate_branch_a_checkpoint(
         "device": str(device),
         "num_examples": results["num_examples"],
         "metrics": results["metrics"],
+        "auc_roc": results["auc_roc"],
         "confusion_matrix": results["confusion_matrix"],
     }

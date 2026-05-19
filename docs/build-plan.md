@@ -23,7 +23,7 @@
 | Phase | Where the repo is now | Next gate |
 | ----- | --------------------- | --------- |
 | 1 | CelebA at `data/celeba/img_align_celeba` (202,599 images); `BranchA_CNN` + `DiscriminatorPhase1` implemented; flow cache complete at `data/flow_cache` (202,599 `*_flow.pt` files, ~7.0 GB, shape `(2, 64, 64)` float32); `test_flow_precompute_smoke` passing; eval module skeleton in place; loader now supports same-identity real pairs, cross-identity proxy fakes, singleton-adjacent fallback, and attribute-derived pseudo-identities when true identity labels are unavailable | Finish the new Phase 1 run on the harder proxy task, then update the saved baseline checkpoint/report |
-| 2 | Branch B (`models/branch_b.py`) and the full Phase 2 A+B stack are implemented; golden regression and Branch A freeze/load tests were added in `tests/test_model.py`; the trainers now include validation-loss-based overfit stopping (trend rule + branch-specific ceilings); the old `phase2_a_b.pt` checkpoint still reflects the earlier trivial proxy task; Branch C, Hinge loss, and checkpoint resume remain open | Retrain Phase 2 from the stronger Phase 1 checkpoint, then continue Branch C / Phase 3 work |
+| 2 | Branch B (`models/branch_b.py`) and the full Phase 2 A+B stack are implemented; golden regression and Branch A freeze/load tests were added in `tests/test_model.py`; the trainers now include validation-loss-based overfit stopping (trend rule + branch-specific ceilings); a standalone Branch A test-split confusion-matrix evaluator is available; the old `phase2_a_b.pt` checkpoint still reflects the earlier trivial proxy task; Branch C, Hinge loss, and checkpoint resume remain open | Retrain Phase 2 from the stronger Phase 1 checkpoint, generate the refreshed Branch A test confusion matrix, then continue Branch C / Phase 3 work |
 
 Update this table when a gate flips so the plan stays honest for the next work session.
 
@@ -47,9 +47,11 @@ Update this table when a gate flips so the plan stays honest for the next work s
 - Model forward-pass tests: `python -m pytest tests/test_model.py -v`
 - Data loader tests: `python -m unittest tests.test_data_pipeline -v` — includes `test_flow_precompute_smoke`
 - Overfit-stop tests: `python -m unittest tests.test_overfit_stop -v`
+- Branch A eval tests: `python -m unittest tests.test_branch_a_baseline -v`
 - Training dry-run (2 batches): add `--max-batches 2` flag or equivalent guard before a full run
 - Checkpoint integrity: load the saved `.pt` and confirm the metric in `benchmark_summary.json` matches the training log
 - Early-stop integrity: confirm any truncated run reports `stopped_early=true` and includes a `stop_reason`
+- Confusion-matrix integrity: run `python -m training.eval_branch_a --config config/config.yaml --run-name branch_a_test_eval` and confirm both JSON and Markdown reports are written under `runs/`
 
 **Definition of done (default)**
 
