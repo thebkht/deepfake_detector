@@ -253,7 +253,7 @@ python3 -m training.phase2_train \
 
 The Phase 2 trainer uses the same overfit trend rule and a Phase 2 loss ceiling of `0.40`.
 
-Each Phase 2 run saves the same preview and plotting artifacts as Branch A:
+Each Phase 2 run writes preview JPGs during training and also attempts the same plotting artifacts as Branch A:
 
 - `train_batch*.jpg`
 - `val_batch*_labels.jpg`
@@ -261,6 +261,10 @@ Each Phase 2 run saves the same preview and plotting artifacts as Branch A:
 - `confusion_matrix.png`
 - `confusion_matrix_normalized.png`
 - `results.png`
+
+Notes:
+- Preview JPGs are saved from the first few train and validation batches during the run.
+- Plot PNGs require `matplotlib`. If it is not installed in the active Python environment, training still completes but the plotting files are skipped.
 
 ## Precompute Optical Flow
 
