@@ -10,6 +10,7 @@ import yaml
 from PIL import Image
 
 from evaluation import compute_binary_classification_metrics
+from evaluation.branch_a_eval import evaluate_branch_a_checkpoint
 from models import BranchABaseline
 from training.branch_a_trainer import _build_scheduler, train_branch_a
 
@@ -112,3 +113,21 @@ class BranchABaselineTestCase(unittest.TestCase):
         saved_summary = json.loads(summary_path.read_text(encoding="utf-8"))
         self.assertEqual(saved_summary["checkpoint_selection_rule"], "highest validation balanced accuracy")
         self.assertIn("cross-identity proxy negatives", saved_summary["limitations"][1])
+
+    def test_branch_a_test_eval_writes_confusion_matrix_report(self) -> None:
+        train_branch_a(self.config_path, run_name="smoke_eval")
+        results = evaluate_branch_a_checkpoint(
+            self.config_path,
+            run_name="branch_a_test_eval",
+            split="test",
+            device_override="cpu",
+        )
+        run_dir = self.root / "runs" / "branch_a_test_eval"
+        json_path = run_dir / "branch_a_test_confusion_matrix.json"
+        md_path = run_dir / "branch_a_test_confusion_matrix.md"
+
+        self.assertEqual(results["split"], "test")
+        self.assertTrue(json_path.exists())
+        self.assertTrue(md_path.exists())
+        saved_results = json.loads(json_path.read_text(encoding="utf-8"))
+        self.assertEqual(set(saved_results["confusion_matrix"].keys()), {"tn", "fp", "fn", "tp"})
