@@ -10,11 +10,12 @@ The long-term design is documented in [docs/master-plan.md](docs/master-plan.md)
 - Implemented: Branch B spatiotemporal features and `DiscriminatorPhase2`
 - Implemented: Phase 2 A+B trainer CLI and checkpoint/report writing
 - Implemented: CelebA dataloader with real/fake pair construction
+- Implemented: validation-loss overfitting stop logic for Branch A and Phase 2
 - Implemented: offline Farneback optical-flow precompute utility
 - Implemented: metric computation, checkpointing, run summaries, and optional TensorBoard logging
-- Verified: Branch B regression tests, Branch A freeze tests, a 1-epoch Phase 2 dry-run, and a full gate-clearing Phase 2 training run
+- Verified: Branch B regression tests, Branch A freeze tests, data pipeline tests, and overfit-stop unit tests
 - Not implemented yet: Branch C, Phase 3+, and the final fused three-branch discriminator
-- Completed: `checkpoints/phase2_a_b.pt` with Phase 2 best validation metrics of balanced accuracy `1.0000` and F1 `1.0000`
+- Historical checkpoint: `checkpoints/phase2_a_b.pt` was trained on the earlier trivial proxy task and should not be treated as the current baseline
 
 ## Repository Layout
 
@@ -111,6 +112,7 @@ Key defaults:
 - Scheduler: `CosineAnnealingLR`
 - Checkpoint metric: `balanced_accuracy`
 - Default checkpoint name: `phase1_branch_a_best.pt`
+- Early-stop defaults: warmup `3`, overfit patience `5`, val-loss ceiling patience `3`, Branch A ceiling `0.35`
 
 The file now also contains a dedicated `phase2:` block:
 
@@ -120,6 +122,7 @@ The file now also contains a dedicated `phase2:` block:
 - Pretrained Branch A checkpoint: `phase1_branch_a_best.pt`
 - Default Phase 2 checkpoint name: `phase2_a_b.pt`
 - Targets: balanced accuracy `>= 0.88`, F1 `>= 0.88`
+- Early-stop defaults: warmup `3`, overfit patience `5`, val-loss ceiling patience `3`, Phase 2 ceiling `0.40`
 
 By default, outputs are written to:
 
@@ -194,6 +197,11 @@ python3 -m training.train_branch_a \
   --device cpu
 ```
 
+The Branch A trainer now stops early if either of these sustained patterns appears:
+
+- validation loss worsens while train loss improves for `5` consecutive epochs
+- after a `3`-epoch warmup, validation loss stays above `0.35` for `3` consecutive epochs while `train_loss < val_loss`
+
 ## Train Phase 2 A+B
 
 Run the Phase 2 trainer:
@@ -224,6 +232,8 @@ python3 -m training.phase2_train \
   --checkpoint-name-override phase2_a_b_smoke.pt \
   --device cpu
 ```
+
+The Phase 2 trainer uses the same overfit trend rule and a Phase 2 loss ceiling of `0.40`.
 
 ## Precompute Optical Flow
 
@@ -257,7 +267,7 @@ The Phase 2 trainer uses:
 - Balanced accuracy: `>= 0.88`
 - F1: `>= 0.88`
 
-These are still in-domain proxy-task gates, not realistic deepfake benchmarks.
+These are still in-domain proxy-task gates, not realistic deepfake benchmarks. Older checked-in checkpoints that report `1.0000` metrics were trained before the cross-identity proxy transition.
 
 ## Tests
 
@@ -290,6 +300,7 @@ Coverage currently includes:
 - If `identity_CelebA.txt` is missing, real pairs fall back to adjacent-image pairing.
 - If `identity_CelebA.txt` is missing, fake pairs fall back to deterministic distant-index pairing.
 - `phase2_a_b.pt` was trained on the earlier trivial proxy task and is not a realistic deepfake benchmark.
+- The checked-in pseudo-identity file may be attribute-derived rather than true CelebA identity labels, depending on local workspace state.
 - The checked-in `.venv` may be stale; in this workspace `pytest` was not available in the active interpreter.
 
 ## Roadmap

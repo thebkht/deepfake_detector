@@ -151,6 +151,7 @@ Current status from the repository state:
 - **Farnebäck cache is already complete on this machine.** Verified on **2026-05-18**: `data/flow_cache` contains **202,599** `*_flow.pt` files with **0 missing / 0 extra** stems against `discover_celeba_images`, sample tensors have shape `(2, 64, 64)` and `float32` dtype, the cache occupies about **7.0 GB**, and `tests.test_data_pipeline.DataPipelineTestCase.test_flow_precompute_smoke` passes.
 - **Week 2 Branch C must preserve the cache contract.** Cached flow filenames are `{frame_a_stem}_flow.pt`, and each tensor is computed against the adjacent-index partner rule used by `data/precompute_flow.py`. The loader now uses cross-identity proxy negatives when identity labels are available, so Branch C must either stay on explicit adjacent-index pairing or use a regenerated cache that matches the new pair selection rule before training.
 - **Week 2 Dev 1 code is now in place.** `models/branch_b.py`, `models/discriminator.py`, `training/phase2_trainer.py`, `training/phase2_train.py`, and `tests/test_model.py` now exist. Branch B's 8-D layout and acceleration proxy are locked by a golden regression test, and Phase 2 includes a real Branch A freeze test plus Phase 1 encoder load/remap coverage.
+- **Current training runs now use guarded stopping.** Branch A and Phase 2 trainers stop early when validation loss shows sustained overfitting, and each phase also has a branch-specific validation-loss ceiling after warmup.
 - **Phase 2 is gate-cleared.** `checkpoints/phase2_a_b.pt` now exists with `phase == 2`; the saved checkpoint reports best validation metrics of **1.0000 balanced accuracy** and **1.0000 F1** at epoch **2**, and `runs/phase2_a_b/benchmark_summary.json` matches those values.
 - **Week 2+ work is still open beyond Dev 1.** Branch C, Phase 3+, ensemble training, and OOD evaluation are still not implemented in the repository.
 
@@ -332,6 +333,7 @@ Fake pair:   single image + small Gaussian noise duplicate
 
 Current proxy: anchor image + different-identity image when labels exist
                fallback to distant-index pairing without identity labels
+               pseudo-identity file may be derived from stable CelebA attributes if true identities are unavailable
                → replace with GAN/diffusion outputs during full deepfake training
 ```
 

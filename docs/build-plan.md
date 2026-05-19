@@ -1,7 +1,7 @@
 # Hybrid Three-Branch GAN Discriminator — Build Plan
 
 > Last updated: 2026-05-18
-> Status: **Week 1 — complete** (Branch A trained; flow cache verified; eval module skeleton in place). **Week 2 — in progress** (Branch B and Branch C implementations open; flow loader update open).
+> Status: **Week 1 — code complete, baseline refresh in progress** (flow cache verified; eval module skeleton in place; stronger proxy-task rerun underway). **Week 2 — in progress** (Branch B and Branch C implementations open; flow loader update open).
 
 > **2 Engineers · 4 Weeks · OOD Robustness Target: 94.4% balanced accuracy**
 
@@ -22,8 +22,8 @@
 
 | Phase | Where the repo is now | Next gate |
 | ----- | --------------------- | --------- |
-| 1 | CelebA at `data/celeba/img_align_celeba` (202,599 images); `BranchA_CNN` + `DiscriminatorPhase1` implemented; `phase1_branch_a_best.pt` saved — val balanced acc 1.0000, F1 1.0000 @ epoch 34; flow cache complete at `data/flow_cache` (202,599 `*_flow.pt` files, ~7.0 GB, shape `(2, 64, 64)` float32); `test_flow_precompute_smoke` passing; eval module skeleton in place | Implement Branch B (`branch_b.py`) and Branch C (`branch_c.py`); update `CelebAFramePairDataset` to return flow tensor; train both branches; save `phase2_a_b.pt` and `phase3_a_b_c.pt` |
-| 2 | Branch B (`models/branch_b.py`) and the full Phase 2 A+B stack are implemented; golden regression and Branch A freeze/load tests were added in `tests/test_model.py`; `checkpoints/phase2_a_b.pt` now exists with `phase == 2`, best epoch `2`, val balanced acc `1.0000`, F1 `1.0000`, loss `2.2898567844768216e-05`; `runs/phase2_a_b/benchmark_summary.json` matches the checkpoint; the loader now uses cross-identity proxy negatives when `identity_CelebA.txt` is available and deterministic distant-index negatives otherwise; Branch C, Hinge loss, and checkpoint resume remain open | Retrain Phase 1/2 on the harder proxy task, then continue Branch C / Phase 3 work |
+| 1 | CelebA at `data/celeba/img_align_celeba` (202,599 images); `BranchA_CNN` + `DiscriminatorPhase1` implemented; flow cache complete at `data/flow_cache` (202,599 `*_flow.pt` files, ~7.0 GB, shape `(2, 64, 64)` float32); `test_flow_precompute_smoke` passing; eval module skeleton in place; loader now supports same-identity real pairs, cross-identity proxy fakes, singleton-adjacent fallback, and attribute-derived pseudo-identities when true identity labels are unavailable | Finish the new Phase 1 run on the harder proxy task, then update the saved baseline checkpoint/report |
+| 2 | Branch B (`models/branch_b.py`) and the full Phase 2 A+B stack are implemented; golden regression and Branch A freeze/load tests were added in `tests/test_model.py`; the trainers now include validation-loss-based overfit stopping (trend rule + branch-specific ceilings); the old `phase2_a_b.pt` checkpoint still reflects the earlier trivial proxy task; Branch C, Hinge loss, and checkpoint resume remain open | Retrain Phase 2 from the stronger Phase 1 checkpoint, then continue Branch C / Phase 3 work |
 
 Update this table when a gate flips so the plan stays honest for the next work session.
 
@@ -45,9 +45,11 @@ Update this table when a gate flips so the plan stays honest for the next work s
 **Local verification (before calling a task done)**
 
 - Model forward-pass tests: `python -m pytest tests/test_model.py -v`
-- Data loader tests: `python -m pytest tests/test_data.py -v` — includes `test_flow_precompute_smoke`
+- Data loader tests: `python -m unittest tests.test_data_pipeline -v` — includes `test_flow_precompute_smoke`
+- Overfit-stop tests: `python -m unittest tests.test_overfit_stop -v`
 - Training dry-run (2 batches): add `--max-batches 2` flag or equivalent guard before a full run
 - Checkpoint integrity: load the saved `.pt` and confirm the metric in `benchmark_summary.json` matches the training log
+- Early-stop integrity: confirm any truncated run reports `stopped_early=true` and includes a `stop_reason`
 
 **Definition of done (default)**
 
@@ -154,7 +156,7 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel — no shared cod
   - Save: epoch, `model_state_dict`, `optimizer_state_dict`, best metric
   - Resume: `--resume checkpoints/<path>.pt`
 - [ ] Finalize eval module (`evaluation/eval.py`) — replace stubs with real implementations; add `plot_confusion_matrix(y_true, y_pred, save_path)`
-- [ ] Unit tests (`tests/test_model.py`, `tests/test_data.py`)
+- [ ] Unit tests (`tests/test_model.py`, `tests/test_data_pipeline.py`)
   - Branch C output shape `(B, 28)` ✓
   - Full Phase 3 forward pass output `(B, 1)` ✓
   - Branch A + B weights unchanged after Phase 3 optimizer step ✓
