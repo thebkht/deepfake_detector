@@ -69,6 +69,12 @@ def _format_memory_label(device: torch.device) -> str:
     if device.type == "cuda":
         allocated_gb = torch.cuda.memory_allocated(device=device) / (1024**3)
         return f"{allocated_gb:.2f}G"
+    if device.type == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "current_allocated_memory"):
+        allocated_gb = torch.mps.current_allocated_memory() / (1024**3)
+        return f"{allocated_gb:.2f}G"
+    if device.type == "xpu" and hasattr(torch, "xpu") and hasattr(torch.xpu, "memory_allocated"):
+        allocated_gb = torch.xpu.memory_allocated(device=device) / (1024**3)
+        return f"{allocated_gb:.2f}G"
     return device.type.upper()
 
 
