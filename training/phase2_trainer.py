@@ -203,6 +203,7 @@ def _run_epoch(
     total_examples = 0
     all_logits: list[np.ndarray] = []
     all_labels: list[np.ndarray] = []
+    branch_b_diag_rows: list[tuple[int, float, float, float]] = []
     start = time.perf_counter()
 
     num_batches = len(dataloader) if max_batches is None else min(len(dataloader), max_batches)
@@ -236,21 +237,15 @@ def _run_epoch(
                 feat_b = diagnostics_model.branch_b(frame_a, frame_b)
             sign_std = summary[:, SIGN_CONSISTENCY_IDX].std(unbiased=False).item()
             feat_std = feat_b.std(unbiased=False).item()
-            print(
-                (
-                    f"Branch B batch={batch_index} feat_b mean={feat_b.mean().item():.4f} std={feat_std:.4f} "
-                    f"sign_consistency_std={sign_std:.4f}"
-                ),
-                flush=True,
-            )
+            branch_b_diag_rows.append((batch_index, feat_b.mean().item(), feat_std, sign_std))
             if feat_std < 0.01:
                 print(
-                    "Warning: Branch B feature std is below 0.01 on the first train batch.",
+                    f"Warning: Branch B feature std is below 0.01 on diagnostic batch {batch_index}.",
                     flush=True,
                 )
             if sign_std < 1e-4:
                 print(
-                    "Warning: sign_consistency appears nearly constant on the first train batch.",
+                    f"Warning: sign_consistency appears nearly constant on diagnostic batch {batch_index}.",
                     flush=True,
                 )
 
@@ -304,6 +299,15 @@ def _run_epoch(
 
     if progress_end == "":
         print()
+
+    if branch_b_diag_rows:
+        summary_text = " | ".join(
+            (
+                f"b{batch_index}: mean={feat_mean:.4f} std={feat_std:.4f} sign_std={sign_std:.4f}"
+                for batch_index, feat_mean, feat_std, sign_std in branch_b_diag_rows
+            )
+        )
+        print(f"Branch B diagnostics ({split_name}): {summary_text}", flush=True)
 
     if total_examples == 0:
         raise ValueError("Received an empty dataloader split; cannot compute metrics")
