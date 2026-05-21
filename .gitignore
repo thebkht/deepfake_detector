@@ -3,6 +3,8 @@ __pycache__/
 .DS_Store
 .pycache_local/
 
+.cursor/
+
 data/celeba/
 data/flow_cache/
 data/celeba/*.zip
