@@ -56,37 +56,33 @@ The proposal is the target design, not the current implementation state.
 
 ### 2.1 High-Level Diagram
 
-```
-                  frame_t (64×64×3)         frame_t1 (64×64×3)
-                       │                           │
-          ┌────────────┼───────────────────────────┤
-          │            │                           │
-          ▼            ▼                           ▼
-    ┌──────────┐ ┌──────────────────────────────────────┐
-    │ Branch A │ │            Branch B                  │
-    │  CNN     │ │  Spatiotemporal Embedding Derivatives│
-    │  Spatial │ └──────────────────┬───────────────────┘
-    │  2048-D  │                    │ 8-D
-    └────┬─────┘      ┌─────────────┘
-         │            │         ┌────────────────────────┐
-         │            │         │       Branch C         │
-         │            │         │  Physics-Based Dynamics│
-         │            │         │  Optical Flow + HSV    │
-         │            │         │  28-D                  │
-         │            │         └────────────┬───────────┘
-         │            │                      │
-         └────────────┴──────────────────────┘
-                              │
-                         Concatenate
-                          2084-D
-                              │
-                    ┌─────────▼──────────┐
-                    │   Fusion FC Head   │
-                    │  2084 → 512 → 128  │
-                    │   → 1 (sigmoid)    │
-                    └────────────────────┘
-                              │
-                         Real / Fake
+```mermaid
+flowchart LR
+  subgraph branchA ["Branch A — CNN Spatial"]
+    FA["frame_t"] --> ENC_A["BranchAEncoder\nno_grad"]
+    ENC_A --> featA["2048-D"]
+  end
+
+  subgraph branchB ["Branch B — Spatiotemporal"]
+    FA --> ENC_S["BranchAEncoder\nshared"]
+    FT1["frame_t1"] --> ENC_S
+    ENC_S --> e_t["e_t 2048-D"]
+    ENC_S --> e_t1["e_t1 2048-D"]
+    e_t --> SUM["8-D temporal summary\nvel · cos_sim · l2_dist · sign_consistency"]
+    e_t1 --> SUM
+    SUM --> EXP["expander 8→32\nLayerNorm + Linear + LeakyReLU"]
+  end
+
+  subgraph branchC ["Branch C — Physics Dynamics"]
+    FA --> FLOW["Farnebäck optical flow\n+ HSV photometrics"]
+    FT1 --> FLOW
+    FLOW --> featC["28-D\nflow div/curl/grad + HSV stats"]
+  end
+
+  featA --> FUS["Fusion FC Head\n2108-D → 512 → 128 → 1"]
+  EXP --> FUS
+  featC --> FUS
+  FUS --> OUT(["Real / Fake"])
 ```
 
 ### 2.2 Branch A — CNN Spatial Features
@@ -153,14 +149,14 @@ Total  →  28-D
 
 This section keeps the proposal contract and the current code path separate.
 
-| Stage | Tensor contract | Status |
-| ----- | --------------- | ------ |
-| Proposal Branch A encoder | `2048-D` per frame | Implemented |
-| Proposal Branch B summary | `8-D` per frame pair | Implemented as an intermediate summary |
-| Current Phase 2 Branch B output | `32-D` learned expansion of the 8-D summary | Implemented |
-| Proposal Branch C output | `28-D` per frame pair | Not implemented |
-| Proposal final fusion | `2048 + 8 + 28 = 2084-D` | Not implemented |
-| Current Phase 2 fusion | `2048 + 32 = 2080-D` | Implemented |
+| Stage                           | Tensor contract                             | Status                                 |
+| ------------------------------- | ------------------------------------------- | -------------------------------------- |
+| Proposal Branch A encoder       | `2048-D` per frame                          | Implemented                            |
+| Proposal Branch B summary       | `8-D` per frame pair                        | Implemented as an intermediate summary |
+| Current Phase 2 Branch B output | `32-D` learned expansion of the 8-D summary | Implemented                            |
+| Proposal Branch C output        | `28-D` per frame pair                       | Not implemented                        |
+| Proposal final fusion           | `2048 + 8 + 28 = 2084-D`                    | Not implemented                        |
+| Current Phase 2 fusion          | `2048 + 32 = 2080-D`                        | Implemented                            |
 
 ---
 
@@ -249,7 +245,7 @@ Two developers, four weeks, split by model vs. data/eval ownership.
 | Week | Tasks                                                                                                                                                                                                                    |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1    | Project scaffold, `config.yaml`, requirements, experiment tracking setup; `BranchA_CNN` + `DiscriminatorPhase1`; core training loop (`trainer.py`), BCE loss; unit tests; train Branch A; save `phase1_branch_a_best.pt` |
-| 2    | `BranchB_Spatiotemporal` + `DiscriminatorPhase2` (Branch A frozen); Phase 2 training script; full-gate Branch B training complete; `phase2_a_b.pt` ready for Dev 2 consumption                                        |
+| 2    | `BranchB_Spatiotemporal` + `DiscriminatorPhase2` (Branch A frozen); Phase 2 training script; full-gate Branch B training complete; `phase2_a_b.pt` ready for Dev 2 consumption                                           |
 | 3    | Full ensemble fine-tune, unfreeze all branches, BCE + Hinge combined loss tuning; save `phase4_ensemble.pt`                                                                                                              |
 | 4    | All 7 ensemble combination experiments; architecture review; support OOD eval                                                                                                                                            |
 
@@ -264,10 +260,10 @@ Two developers, four weeks, split by model vs. data/eval ownership.
 
 ### 4-Week Timeline
 
-| Team | Week 1 | Week 2 | Week 3 | Week 4 |
-| ---- | ------ | ------ | ------ | ------ |
-| Dev 1 | Scaffold + Branch A + Train | Branch B | Ensemble fine-tune | Ensemble experiments |
-| Dev 2 | Data + flow + eval module | Flow cache + Branch C | RF ensemble + ablation | OOD + profiling + report |
+| Team  | Week 1                      | Week 2                | Week 3                 | Week 4                   |
+| ----- | --------------------------- | --------------------- | ---------------------- | ------------------------ |
+| Dev 1 | Scaffold + Branch A + Train | Branch B              | Ensemble fine-tune     | Ensemble experiments     |
+| Dev 2 | Data + flow + eval module   | Flow cache + Branch C | RF ensemble + ablation | OOD + profiling + report |
 
 ### Critical Sync Points
 
@@ -403,12 +399,12 @@ Training all branches simultaneously from scratch leads to unstable gradients an
 
 ### Phase Summary
 
-| Phase | Trainable Parameters | Frozen | Target Metric |
-| ----- | -------------------- | ------ | ------------- |
-| 1 | Branch A baseline + FC | — | Acc ≥ 77%, F1 ≥ 0.70 |
-| 2 | Branch B + A+B fusion head | Branch A encoder | Acc ≥ 88%, F1 ≥ 0.88 |
-| 3 | Branch C + A+B+C fusion head | Branch A, B | Acc ≥ 83%, F1 ≥ 0.80 |
-| 4 | Full fused model or ensemble stack | — | Acc ≥ 94%, F1 ≥ 0.93 |
+| Phase | Trainable Parameters               | Frozen           | Target Metric        |
+| ----- | ---------------------------------- | ---------------- | -------------------- |
+| 1     | Branch A baseline + FC             | —                | Acc ≥ 77%, F1 ≥ 0.70 |
+| 2     | Branch B + A+B fusion head         | Branch A encoder | Acc ≥ 88%, F1 ≥ 0.88 |
+| 3     | Branch C + A+B+C fusion head       | Branch A, B      | Acc ≥ 83%, F1 ≥ 0.80 |
+| 4     | Full fused model or ensemble stack | —                | Acc ≥ 94%, F1 ≥ 0.93 |
 
 ---
 
