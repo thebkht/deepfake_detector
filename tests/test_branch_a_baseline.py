@@ -12,7 +12,7 @@ from PIL import Image
 from evaluation import compute_binary_classification_metrics
 from evaluation.branch_a_eval import evaluate_branch_a_checkpoint
 from models import BranchABaseline
-from training.branch_a_trainer import _build_scheduler, train_branch_a
+from training.trainer import _build_scheduler, train_branch_a
 
 
 class BranchABaselineTestCase(unittest.TestCase):

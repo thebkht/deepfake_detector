@@ -4,12 +4,13 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import Mapping, cast
 
 import torch
 from PIL import Image
 
 from data.augmentations import build_transforms
-from data.celeba_loader import CelebAFramePairDataset, create_celeba_dataloader
+from data.celeba_loader import CelebAFramePairDataset, FramePairSample, create_celeba_dataloader
 from data.precompute_flow import precompute_flow
 from training.tracker import Tracker
 
@@ -20,6 +21,10 @@ except ModuleNotFoundError:
 
 
 class DataPipelineTestCase(unittest.TestCase):
+    @staticmethod
+    def _metadata(sample: FramePairSample) -> Mapping[str, object]:
+        return cast(Mapping[str, object], sample["metadata"])
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
@@ -79,7 +84,7 @@ class DataPipelineTestCase(unittest.TestCase):
             fake_ratio=0.5,
             train=False,
         )
-        sample = dataset[0]
+        sample = cast(FramePairSample, dataset[0])
         self.assertEqual(tuple(sample["frame_a"].shape), (3, 64, 64))
         self.assertEqual(tuple(sample["frame_b"].shape), (3, 64, 64))
         self.assertFalse(torch.isnan(sample["frame_a"]).any())
@@ -93,7 +98,7 @@ class DataPipelineTestCase(unittest.TestCase):
             fake_ratio=0.5,
             train=False,
         )
-        labels = [int(dataset[idx]["label"]) for idx in range(len(dataset))]
+        labels = [int(cast(FramePairSample, dataset[idx])["label"]) for idx in range(len(dataset))]
         self.assertEqual(sum(labels), len(labels) // 2)
 
     def test_identity_pairs_use_same_identity_when_file_present(self) -> None:
@@ -104,12 +109,12 @@ class DataPipelineTestCase(unittest.TestCase):
             fake_ratio=0.0,
             train=False,
         )
-        sample = dataset[0]
-        metadata = sample["metadata"]
+        sample = cast(FramePairSample, dataset[0])
+        metadata = self._metadata(sample)
         self.assertEqual(metadata["pair_type"], "real")
         self.assertEqual(metadata["pair_strategy"], "same_identity")
         self.assertEqual(metadata["identity"], 1)
-        self.assertTrue(metadata["pair_path"].endswith("000002.jpg"))
+        self.assertTrue(str(metadata["pair_path"]).endswith("000002.jpg"))
 
     def test_adjacent_fallback_when_identity_file_missing(self) -> None:
         dataset = CelebAFramePairDataset(
@@ -119,10 +124,10 @@ class DataPipelineTestCase(unittest.TestCase):
             fake_ratio=0.0,
             train=False,
         )
-        sample = dataset[2]
-        metadata = sample["metadata"]
+        sample = cast(FramePairSample, dataset[2])
+        metadata = self._metadata(sample)
         self.assertEqual(metadata["pair_strategy"], "adjacent_fallback")
-        self.assertTrue(metadata["pair_path"].endswith("000004.jpg"))
+        self.assertTrue(str(metadata["pair_path"]).endswith("000004.jpg"))
         self.assertIsNone(metadata["identity"])
 
     def test_identity_singleton_falls_back_to_adjacent_pair(self) -> None:
@@ -149,12 +154,12 @@ class DataPipelineTestCase(unittest.TestCase):
             fake_ratio=0.0,
             train=False,
         )
-        sample = dataset[0]
-        metadata = sample["metadata"]
+        sample = cast(FramePairSample, dataset[0])
+        metadata = self._metadata(sample)
         self.assertEqual(metadata["pair_type"], "real")
         self.assertEqual(metadata["pair_strategy"], "identity_singleton_adjacent")
         self.assertEqual(metadata["identity"], 1)
-        self.assertTrue(metadata["pair_path"].endswith("000002.jpg"))
+        self.assertTrue(str(metadata["pair_path"]).endswith("000002.jpg"))
 
     def test_augmentation_normalizes_to_expected_range(self) -> None:
         transform = build_transforms(image_size=64, train=True)
@@ -170,7 +175,7 @@ class DataPipelineTestCase(unittest.TestCase):
         config["paths"]["identity_file"] = str(self.root / "celeba" / "missing_identity.txt")
         loader = create_celeba_dataloader(config, split="train", limit=256)
         start = time.perf_counter()
-        batch = next(iter(loader))
+        batch = cast(Mapping[str, torch.Tensor], next(iter(loader)))
         elapsed = time.perf_counter() - start
         self.assertEqual(batch["frame_a"].shape[0], 64)
         self.assertLess(elapsed, 5.0)

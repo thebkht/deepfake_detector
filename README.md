@@ -33,7 +33,7 @@ deepfake_detector/
 │   └── master-plan.md
 ├── evaluation/
 │   ├── branch_a_eval.py
-│   └── metrics.py
+│   └── eval.py
 ├── models/
 │   ├── branch_a.py
 │   ├── branch_b.py
@@ -43,16 +43,16 @@ deepfake_detector/
 ├── tests/
 │   ├── test_bootstrap_and_imports.py
 │   ├── test_branch_a_baseline.py
-│   ├── test_data_pipeline.py
+│   ├── test_data.py
 │   └── test_model.py
 ├── training/
-│   ├── branch_a_trainer.py
 │   ├── eval_branch_a.py
 │   ├── overfit_stop.py
+│   ├── phase1_train.py
 │   ├── phase2_train.py
 │   ├── phase2_trainer.py
 │   ├── tracker.py
-│   └── train_branch_a.py
+│   └── trainer.py
 ├── pyrightconfig.json
 ├── requirements.txt
 └── README.md
@@ -185,7 +185,7 @@ The tests include explicit failure checks for missing Kaggle CLI and missing cre
 Run the baseline trainer:
 
 ```bash
-python3 -m training.train_branch_a --config config/config.yaml --run-name branch_a_baseline
+python3 -m training.phase1_train --config config/config.yaml --run-name branch_a_baseline
 ```
 
 Useful flags:
@@ -199,7 +199,7 @@ Useful flags:
 Example short smoke run:
 
 ```bash
-python3 -m training.train_branch_a \
+python3 -m training.phase1_train \
   --config config/config.yaml \
   --run-name smoke \
   --train-limit 512 \
@@ -282,7 +282,7 @@ This produces one `*_flow.pt` tensor per image. The current Branch A baseline do
 
 ## Evaluation And Targets
 
-The implemented evaluation in [evaluation/metrics.py](evaluation/metrics.py) reports:
+The implemented evaluation in [evaluation/eval.py](evaluation/eval.py) reports:
 
 - Balanced accuracy
 - F1 score

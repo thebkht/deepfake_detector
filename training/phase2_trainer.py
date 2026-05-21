@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 from data.celeba_loader import create_celeba_dataloader, load_config
 from evaluation import compute_binary_classification_metrics
 from models import DiscriminatorPhase2, load_pretrained_branch_a
-from training.branch_a_trainer import (
+from training.trainer import (
     _as_float,
     _as_str_key_mapping,
     _format_duration,

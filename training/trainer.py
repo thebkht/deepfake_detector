@@ -31,6 +31,9 @@ TARGET_BALANCED_ACCURACY = 0.77
 TARGET_F1 = 0.70
 BRANCH_A_VAL_LOSS_CEILING = 0.35
 
+BinaryMetrics = Dict[str, float]
+EpochMetrics = Dict[str, float | np.ndarray[Any, Any]]
+
 
 def _format_duration(seconds: float) -> str:
     if seconds < 60:
@@ -166,7 +169,7 @@ def _run_epoch(
     split_name: str = "train",
     run_dir: Optional[Path] = None,
     include_predictions: bool = False,
-) -> Dict[str, float]:
+) -> EpochMetrics:
     is_train = optimizer is not None
     model.train(is_train)
     total_loss = 0.0
@@ -246,7 +249,11 @@ def _run_epoch(
     average_loss = total_loss / total_examples
     logits = np.concatenate(all_logits)
     labels = np.concatenate(all_labels).astype(np.int64)
-    metrics = compute_binary_classification_metrics(logits=logits, labels=labels, average_loss=average_loss)
+    metrics: EpochMetrics = compute_binary_classification_metrics(
+        logits=logits,
+        labels=labels,
+        average_loss=average_loss,
+    )
     metrics["duration_seconds"] = time.perf_counter() - start
     metrics["num_batches"] = float(len(dataloader))
     if include_predictions:
@@ -260,7 +267,7 @@ def _serialize_history(path: Path, history: list[EpochResult]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _status_label(best_metrics: Dict[str, float]) -> str:
+def _status_label(best_metrics: BinaryMetrics) -> str:
     meets_bal_acc = best_metrics["balanced_accuracy"] >= TARGET_BALANCED_ACCURACY
     meets_f1 = best_metrics["f1"] >= TARGET_F1
     if meets_bal_acc and meets_f1:
@@ -274,7 +281,7 @@ def _build_summary_payload(
     *,
     config: Dict[str, Any],
     training_cfg: Dict[str, Any],
-    best_metrics: Dict[str, float],
+    best_metrics: BinaryMetrics,
     best_epoch: int,
     device: torch.device,
     run_dir: Path,
@@ -387,7 +394,7 @@ def _print_epoch_summary(
     val_metrics: Dict[str, float],
     current_lr: float,
     best_epoch: int,
-    best_metrics: Dict[str, float],
+    best_metrics: BinaryMetrics,
 ) -> None:
     print(
         (
@@ -465,9 +472,9 @@ def train_branch_a(
 
     history: list[EpochResult] = []
     best_epoch = 0
-    best_metrics: Optional[Dict[str, float]] = None
-    best_val_logits: Optional[np.ndarray] = None
-    best_val_labels: Optional[np.ndarray] = None
+    best_metrics: Optional[BinaryMetrics] = None
+    best_val_logits: Optional[np.ndarray[Any, Any]] = None
+    best_val_labels: Optional[np.ndarray[Any, Any]] = None
     stop_reason: Optional[str] = None
     completed_epochs = 0
     overfit_monitor = OverfitStopMonitor(_resolve_early_stopping(training_cfg))
@@ -541,7 +548,11 @@ def train_branch_a(
                 val_metrics["balanced_accuracy"] > best_metrics["balanced_accuracy"]
             )
             if should_replace:
-                best_metrics = val_metrics
+                best_metrics = {
+                    "balanced_accuracy": float(val_metrics["balanced_accuracy"]),
+                    "f1": float(val_metrics["f1"]),
+                    "loss": float(val_metrics["loss"]),
+                }
                 best_epoch = epoch
                 best_val_logits = np.asarray(val_metrics["logits"]).copy()
                 best_val_labels = np.asarray(val_metrics["labels"]).copy()
@@ -568,7 +579,7 @@ def train_branch_a(
                 val_metrics=val_metrics,
                 current_lr=current_lr,
                 best_epoch=best_epoch,
-                best_metrics=cast(Dict[str, float], best_metrics),
+                best_metrics=cast(BinaryMetrics, best_metrics),
             )
             completed_epochs = epoch
             stop_decision = overfit_monitor.update(

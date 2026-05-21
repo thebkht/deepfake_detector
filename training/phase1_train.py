@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from training.branch_a_trainer import train_branch_a
+
+from training.trainer import train_branch_a
 
 
 def build_parser() -> argparse.ArgumentParser:

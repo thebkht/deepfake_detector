@@ -45,7 +45,7 @@ Update this table when a gate flips so the plan stays honest for the next work s
 **Local verification (before calling a task done)**
 
 - Model forward-pass tests: `python -m pytest tests/test_model.py -v`
-- Data loader tests: `python -m unittest tests.test_data_pipeline -v` — includes `test_flow_precompute_smoke`
+- Data loader tests: `python -m unittest tests.test_data -v` — includes `test_flow_precompute_smoke`
 - Overfit-stop tests: `python -m unittest tests.test_overfit_stop -v`
 - Branch A eval tests: `python -m unittest tests.test_branch_a_baseline -v`
 - Training dry-run (2 batches): add `--max-batches 2` flag or equivalent guard before a full run
@@ -94,7 +94,7 @@ Update this table when a gate flips so the plan stays honest for the next work s
 - [x] Data loader unit tests: shape checks, label balance, no NaN
 - [x] Launch Farnebäck flow pre-computation (`data/precompute_flow.py`)
 - [x] Flow cache verified: 202,599 files, 0 missing, 0 extra, shape `(2, 64, 64)` float32, ~7.0 GB
-- [x] `tests.test_data_pipeline.DataPipelineTestCase.test_flow_precompute_smoke` passing
+- [x] `tests.test_data.DataPipelineTestCase.test_flow_precompute_smoke` passing
 - [x] Eval module skeleton (`evaluation/eval.py`) — `compute_balanced_accuracy`, `compute_f1`, `compute_auc_roc` stubs defined
 
 **Done when:** `phase1_branch_a_best.pt` reports val balanced acc ≥ 77% and F1 ≥ 0.70 in `benchmark_summary.json`; flow cache contains exactly 202,599 files and smoke test passes.
@@ -158,7 +158,7 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel — no shared cod
   - Save: epoch, `model_state_dict`, `optimizer_state_dict`, best metric
   - Resume: `--resume checkpoints/<path>.pt`
 - [ ] Finalize eval module (`evaluation/eval.py`) — replace stubs with real implementations; add `plot_confusion_matrix(y_true, y_pred, save_path)`
-- [ ] Unit tests (`tests/test_model.py`, `tests/test_data_pipeline.py`)
+- [ ] Unit tests (`tests/test_model.py`, `tests/test_data.py`)
   - Branch C output shape `(B, 28)` ✓
   - Full Phase 3 forward pass output `(B, 1)` ✓
   - Branch A + B weights unchanged after Phase 3 optimizer step ✓

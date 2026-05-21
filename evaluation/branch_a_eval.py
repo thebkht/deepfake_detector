@@ -14,7 +14,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from data.celeba_loader import create_celeba_dataloader, load_config
-from evaluation.metrics import compute_binary_classification_metrics
+from evaluation.eval import compute_binary_classification_metrics
 from models import BranchABaseline
 
 
