@@ -80,12 +80,12 @@ The intended training order is:
 
 The repository currently implements Branch A and the A+B Phase 2 stack.
 
-Branch A in [models/branch_a.py](/Users/thebkht/Sejong Uni/Pattern Regocnition/deepfake_detector/models/branch_a.py):
+Branch A in [models/branch_a.py](models/branch_a.py):
 
 - `BranchAEncoder`: five convolution blocks with spectral normalization and LeakyReLU, outputting a `2048-D` feature from one frame
 - `BranchABaseline`: applies the encoder to both frames and classifies the concatenated `4096-D` pair representation
 
-Branch B and Phase 2 in [models/branch_b.py](/Users/thebkht/Sejong Uni/Pattern Regocnition/deepfake_detector/models/branch_b.py) and [models/discriminator.py](/Users/thebkht/Sejong Uni/Pattern Regocnition/deepfake_detector/models/discriminator.py):
+Branch B and Phase 2 in [models/branch_b.py](models/branch_b.py) and [models/discriminator.py](models/discriminator.py):
 
 - `BranchB_Spatiotemporal` now reuses the pretrained `BranchAEncoder` for both frames instead of a separate `EmbedCNN`
 - Committed temporal summary: `8-D` `[vel_mean, vel_std, vel_max, vel_min, cos_sim, l2_dist, sign_consistency, abs_vel_mean]`
@@ -281,6 +281,7 @@ Each Phase 2 run writes preview JPGs during training and also attempts the same 
 - `results.png`
 
 Notes:
+
 - Preview JPGs are saved from the first few train and validation batches during the run.
 - Plot PNGs require `matplotlib`. If it is not installed in the active Python environment, training still completes but the plotting files are skipped.
 
