@@ -10,3 +10,5 @@ data/flow_cache/
 data/celeba/*.zip
 checkpoints/
 runs/
+
+.codegraph
