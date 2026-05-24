@@ -16,6 +16,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs-override", type=int, default=None, help="Optional epoch override for dry runs")
     parser.add_argument("--max-batches", type=int, default=None, help="Optional cap for batches per split")
     parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="Optional Phase 3 dataloader worker override for throughput tests.",
+    )
+    parser.add_argument(
         "--checkpoint-name-override",
         default=None,
         help="Optional checkpoint filename override for smoke runs or alternate outputs.",
@@ -24,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--device",
         choices=("cpu", "cuda", "mps"),
         default=None,
-        help="Optional device override. Defaults to cuda, then mps, then cpu.",
+        help="Optional device override. Defaults to mps, then cuda, then cpu.",
     )
     parser.add_argument(
         "--tracker-backend",
@@ -46,6 +52,7 @@ def main() -> None:
         epochs_override=args.epochs_override,
         device_override=args.device,
         max_batches=args.max_batches,
+        num_workers_override=args.num_workers,
         checkpoint_name_override=args.checkpoint_name_override,
         resume=args.resume,
     )

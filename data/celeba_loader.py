@@ -130,6 +130,7 @@ class DatasetConfig(TypedDict, total=False):
 class DataloaderConfig(TypedDict, total=False):
     batch_size: int
     num_workers: int
+    prefetch_factor: int
     pin_memory: bool
     drop_last: bool
 
@@ -476,6 +477,7 @@ def create_celeba_dataloader(
     limit: Optional[int] = None,
     include_flow: Optional[bool] = None,
     pairing_mode: Optional[PairingMode] = None,
+    dataloader_overrides: Optional[Mapping[str, object]] = None,
 ) -> DataLoader:
     if isinstance(config, (str, Path)):
         config = load_config(config)
@@ -483,7 +485,9 @@ def create_celeba_dataloader(
 
     paths = typed_config["paths"]
     dataset_cfg = typed_config["dataset"]
-    dataloader_cfg = typed_config["dataloader"]
+    dataloader_cfg = dict(typed_config["dataloader"])
+    if dataloader_overrides is not None:
+        dataloader_cfg.update(dataloader_overrides)
     phase3_cfg = cast(Mapping[str, object], typed_config.get("phase3", {}))
     split = split.lower()
     if split not in {"train", "val", "test"}:
@@ -508,12 +512,16 @@ def create_celeba_dataloader(
     if shuffle is None:
         shuffle = split == "train"
 
-    return DataLoader(
-        dataset,
-        batch_size=_get_int(dataloader_cfg, "batch_size"),
-        shuffle=shuffle,
-        num_workers=_get_int(dataloader_cfg, "num_workers"),
-        pin_memory=_get_bool(dataloader_cfg, "pin_memory"),
-        drop_last=_get_bool(dataloader_cfg, "drop_last"),
-        collate_fn=collate_frame_pair_batch,
-    )
+    num_workers = _get_int(dataloader_cfg, "num_workers")
+    dataloader_kwargs: Dict[str, object] = {
+        "batch_size": _get_int(dataloader_cfg, "batch_size"),
+        "shuffle": shuffle,
+        "num_workers": num_workers,
+        "pin_memory": _get_bool(dataloader_cfg, "pin_memory"),
+        "drop_last": _get_bool(dataloader_cfg, "drop_last"),
+        "collate_fn": collate_frame_pair_batch,
+    }
+    if num_workers > 0 and "prefetch_factor" in dataloader_cfg:
+        dataloader_kwargs["prefetch_factor"] = _get_int(dataloader_cfg, "prefetch_factor")
+
+    return DataLoader(dataset, **dataloader_kwargs)

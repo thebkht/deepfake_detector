@@ -211,7 +211,7 @@ Useful flags:
 - `--train-limit`: cap train samples for smoke runs
 - `--val-limit`: cap validation samples for smoke runs
 - `--epochs-override`: override configured epochs
-- `--device cpu|cuda|mps`: force a device
+- `--device cpu|cuda|mps`: force a device; default is `mps`, then `cuda`, then `cpu`
 - `--tracker-backend tensorboard`: emit TensorBoard logs under `runs/<run-name>/tensorboard`
 
 Example short smoke run:
@@ -253,7 +253,7 @@ Useful flags:
 - `--epochs-override`: override configured epochs
 - `--max-batches`: cap batches per split for very short dry-runs
 - `--checkpoint-name-override`: avoid overwriting the final checkpoint during smoke runs
-- `--device cpu|cuda|mps`: force a device
+- `--device cpu|cuda|mps`: force a device; default is `mps`, then `cuda`, then `cpu`
 
 Example smoke run:
 

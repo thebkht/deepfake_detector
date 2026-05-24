@@ -226,6 +226,7 @@ def _build_summary_payload(
     *,
     config: Dict[str, Any],
     phase3_cfg: Dict[str, Any],
+    dataloader_cfg: Dict[str, Any],
     best_metrics: Dict[str, float],
     best_epoch: int,
     device: torch.device,
@@ -272,7 +273,12 @@ def _build_summary_payload(
             "checkpoint_metric": "balanced_accuracy",
         },
         "dataloader": {
-            "num_workers": int(config["dataloader"]["num_workers"]),
+            "num_workers": int(dataloader_cfg["num_workers"]),
+            **(
+                {"prefetch_factor": int(dataloader_cfg["prefetch_factor"])}
+                if "prefetch_factor" in dataloader_cfg and int(dataloader_cfg["num_workers"]) > 0
+                else {}
+            ),
             "note": "bump num_workers if Phase 4 becomes IO-bound",
         },
         "flow_cache": flow_cache_report,
@@ -327,14 +333,21 @@ def train_phase3(
     epochs_override: Optional[int] = None,
     device_override: Optional[str] = None,
     max_batches: Optional[int] = None,
+    num_workers_override: Optional[int] = None,
     checkpoint_name_override: Optional[str] = None,
     resume: Optional[str | Path] = None,
 ) -> Dict[str, Any]:
     training_start = time.perf_counter()
     config = _as_str_key_mapping(load_config(config_path), context="config")
     phase3_cfg = _as_str_key_mapping(config["phase3"], context="config.phase3")
+    phase3_dataloader_cfg = dict(_as_str_key_mapping(config["dataloader"], context="config.dataloader"))
+    phase3_dataloader_cfg.update(
+        _as_str_key_mapping(phase3_cfg.get("dataloader", {}), context="config.phase3.dataloader")
+    )
     if epochs_override is not None:
         phase3_cfg["epochs"] = int(epochs_override)
+    if num_workers_override is not None:
+        phase3_dataloader_cfg["num_workers"] = int(num_workers_override)
     effective_config = dict(config)
     effective_config["phase3"] = phase3_cfg
     _set_seed(int(phase3_cfg["seed"]))
@@ -371,6 +384,7 @@ def train_phase3(
         limit=train_limit,
         include_flow=True,
         pairing_mode="adjacent_cache",
+        dataloader_overrides=phase3_dataloader_cfg,
     )
     val_loader = create_celeba_dataloader(
         config,
@@ -379,6 +393,7 @@ def train_phase3(
         limit=val_limit,
         include_flow=True,
         pairing_mode="adjacent_cache",
+        dataloader_overrides=phase3_dataloader_cfg,
     )
 
     checkpoints_dir = Path(str(paths_cfg["checkpoints_dir"]))
@@ -508,6 +523,7 @@ def train_phase3(
     summary_payload = _build_summary_payload(
         config=config,
         phase3_cfg=phase3_cfg,
+        dataloader_cfg=phase3_dataloader_cfg,
         best_metrics=best_metrics,
         best_epoch=best_epoch,
         device=device,

@@ -212,10 +212,10 @@ def _resolve_device(device_override: Optional[str] = None) -> torch.device:
             return torch.device("cpu")
         raise ValueError(f"Unsupported device override: {device_override}")
 
-    if torch.cuda.is_available():
-        return torch.device("cuda")
     if torch.backends.mps.is_available():
         return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
     return torch.device("cpu")
 
 

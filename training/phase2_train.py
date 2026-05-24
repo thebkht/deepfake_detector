@@ -24,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--device",
         choices=("cpu", "cuda", "mps"),
         default=None,
-        help="Optional device override. Defaults to cuda, then mps, then cpu.",
+        help="Optional device override. Defaults to mps, then cuda, then cpu.",
     )
     parser.add_argument(
         "--tracker-backend",

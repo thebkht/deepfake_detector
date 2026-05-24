@@ -22,7 +22,8 @@ dataset:
 
 dataloader:
   batch_size: 64
-  num_workers: 0
+  num_workers: 2
+  prefetch_factor: 2
   pin_memory: false
   drop_last: false
 
