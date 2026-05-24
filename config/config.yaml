@@ -78,6 +78,7 @@ phase2:
 
 phase3:
   epochs: 20
+  device: mps
   learning_rate: 0.0002
   optimizer: adam
   betas:
@@ -91,6 +92,8 @@ phase3:
   pretrained_phase2: phase2_a_b.pt
   pairing_mode: adjacent_cache
   include_flow: true
+  dataloader:
+    num_workers: 2
   targets:
     balanced_accuracy: 0.83
     f1: 0.80

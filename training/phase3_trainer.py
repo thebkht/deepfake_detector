@@ -351,7 +351,8 @@ def train_phase3(
     effective_config = dict(config)
     effective_config["phase3"] = phase3_cfg
     _set_seed(int(phase3_cfg["seed"]))
-    device = _resolve_device(device_override)
+    resolved_device_override = device_override if device_override is not None else cast(Optional[str], phase3_cfg.get("device"))
+    device = _resolve_device(resolved_device_override)
     model = DiscriminatorPhase3(dropout=float(phase3_cfg["dropout"]))
     paths_cfg = _as_str_key_mapping(config["paths"], context="config.paths")
     phase2_path = Path(str(paths_cfg["checkpoints_dir"])) / str(phase3_cfg["pretrained_phase2"])
