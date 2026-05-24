@@ -513,15 +513,24 @@ def create_celeba_dataloader(
         shuffle = split == "train"
 
     num_workers = _get_int(dataloader_cfg, "num_workers")
-    dataloader_kwargs: Dict[str, object] = {
-        "batch_size": _get_int(dataloader_cfg, "batch_size"),
-        "shuffle": shuffle,
-        "num_workers": num_workers,
-        "pin_memory": _get_bool(dataloader_cfg, "pin_memory"),
-        "drop_last": _get_bool(dataloader_cfg, "drop_last"),
-        "collate_fn": collate_frame_pair_batch,
-    }
     if num_workers > 0 and "prefetch_factor" in dataloader_cfg:
-        dataloader_kwargs["prefetch_factor"] = _get_int(dataloader_cfg, "prefetch_factor")
+        return DataLoader(
+            dataset,
+            batch_size=_get_int(dataloader_cfg, "batch_size"),
+            shuffle=shuffle,
+            num_workers=num_workers,
+            pin_memory=_get_bool(dataloader_cfg, "pin_memory"),
+            drop_last=_get_bool(dataloader_cfg, "drop_last"),
+            collate_fn=collate_frame_pair_batch,
+            prefetch_factor=_get_int(dataloader_cfg, "prefetch_factor"),
+        )
 
-    return DataLoader(dataset, **dataloader_kwargs)
+    return DataLoader(
+        dataset,
+        batch_size=_get_int(dataloader_cfg, "batch_size"),
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=_get_bool(dataloader_cfg, "pin_memory"),
+        drop_last=_get_bool(dataloader_cfg, "drop_last"),
+        collate_fn=collate_frame_pair_batch,
+    )
