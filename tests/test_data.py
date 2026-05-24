@@ -10,7 +10,13 @@ import torch
 from PIL import Image
 
 from data.augmentations import build_transforms
-from data.celeba_loader import CelebAFramePairDataset, FramePairSample, create_celeba_dataloader
+from data.celeba_loader import (
+    CelebAFramePairDataset,
+    FramePairSample,
+    _load_flow_tensor,
+    create_celeba_dataloader,
+    verify_flow_cache,
+)
 from data.precompute_flow import precompute_flow
 from training.tracker import Tracker
 
@@ -186,6 +192,82 @@ class DataPipelineTestCase(unittest.TestCase):
         self.assertEqual(count, len(list(self.image_root.glob("*.jpg"))))
         sample_flow = torch.load(out_dir / "000001_flow.pt")
         self.assertEqual(tuple(sample_flow.shape), (2, 64, 64))
+
+    def test_getitem_includes_flow_tensor(self) -> None:
+        out_dir = self.root / "flow_cache"
+        precompute_flow(self.image_root, out_dir, method="farneback", image_size=64)
+        dataset = CelebAFramePairDataset(
+            image_dir=self.image_root,
+            identity_file=self.identity_file,
+            image_size=64,
+            fake_ratio=0.0,
+            train=False,
+            flow_cache_dir=out_dir,
+        )
+
+        sample = cast(FramePairSample, dataset[0])
+
+        self.assertIn("flow", sample)
+        flow = cast(torch.Tensor, sample.get("flow"))
+        self.assertEqual(tuple(flow.shape), (2, 64, 64))
+        self.assertEqual(flow.dtype, torch.float32)
+        self.assertFalse(torch.isnan(flow).any())
+
+    def test_adjacent_cache_pairing_matches_precompute_partner(self) -> None:
+        out_dir = self.root / "flow_cache"
+        precompute_flow(self.image_root, out_dir, method="farneback", image_size=64)
+        dataset = CelebAFramePairDataset(
+            image_dir=self.image_root,
+            identity_file=self.identity_file,
+            image_size=64,
+            fake_ratio=0.5,
+            train=False,
+            flow_cache_dir=out_dir,
+            pairing_mode="adjacent_cache",
+        )
+
+        sample = cast(FramePairSample, dataset[2])
+        metadata = self._metadata(sample)
+
+        self.assertTrue(str(metadata["pair_path"]).endswith("000004.jpg"))
+        self.assertEqual(metadata["pair_strategy"], "adjacent_cache_identity_match")
+        self.assertEqual(int(cast(torch.Tensor, sample["label"]).item()), 0)
+
+    def test_collate_includes_flow_batch(self) -> None:
+        out_dir = self.root / "flow_cache"
+        precompute_flow(self.image_root, out_dir, method="farneback", image_size=64)
+        config = self._base_config()
+        config["paths"]["flow_cache_dir"] = str(out_dir)
+        config["phase3"] = {"include_flow": True, "pairing_mode": "adjacent_cache"}
+
+        loader = create_celeba_dataloader(config, split="train", limit=8)
+        batch = cast(Mapping[str, torch.Tensor], next(iter(loader)))
+
+        self.assertIn("flow", batch)
+        self.assertEqual(tuple(batch["flow"].shape), (6, 2, 64, 64))
+
+    def test_flow_cache_load_real_format(self) -> None:
+        out_dir = self.root / "flow_cache"
+        precompute_flow(self.image_root, out_dir, method="farneback", image_size=64)
+
+        flow = _load_flow_tensor(out_dir / "000001_flow.pt")
+
+        self.assertEqual(tuple(flow.shape), (2, 64, 64))
+
+    def test_verify_flow_cache_counts_missing_and_extra(self) -> None:
+        out_dir = self.root / "flow_cache"
+        precompute_flow(self.image_root, out_dir, method="farneback", image_size=64)
+        (out_dir / "000003_flow.pt").unlink()
+        torch.save(torch.zeros(2, 64, 64), out_dir / "extra_flow.pt")
+
+        summary = verify_flow_cache(self.image_root, out_dir)
+
+        self.assertEqual(summary["expected_count"], 8)
+        self.assertEqual(summary["count"], 8)
+        self.assertEqual(summary["missing_count"], 1)
+        self.assertEqual(summary["extra_count"], 1)
+        self.assertIn("000003", cast(list[str], summary["missing"]))
+        self.assertIn("extra", cast(list[str], summary["extra"]))
 
     @unittest.skipIf(tensorboard is None, "tensorboard is not installed in the current environment")
     def test_tracker_emits_tensorboard_logs(self) -> None:

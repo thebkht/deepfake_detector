@@ -1,4 +1,4 @@
-"""CelebA frame-pair dataset and dataloader factory for Week 1."""
+"""CelebA frame-pair dataset and dataloader factory for Week 1 and Phase 3."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple, TypedDict, cast
+from pickle import UnpicklingError
+from typing import Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, TypedDict, cast
 
 try:
     from typing import NotRequired
@@ -109,6 +110,7 @@ class FramePairSample(TypedDict):
     frame_b: torch.Tensor
     label: torch.Tensor
     metadata: Dict[str, object]
+    flow: NotRequired[torch.Tensor]
 
 
 class PathsConfig(TypedDict):
@@ -136,6 +138,55 @@ class LoaderConfig(TypedDict):
     paths: PathsConfig
     dataset: DatasetConfig
     dataloader: DataloaderConfig
+    phase3: NotRequired[Dict[str, object]]
+
+
+PairingMode = Literal["default", "adjacent_cache"]
+
+
+def _select_adjacent_partner_index(index: int, total_size: int) -> int:
+    partner_index = min(index + 1, total_size - 1)
+    if partner_index == index:
+        partner_index = max(0, index - 1)
+    return partner_index
+
+
+def _load_flow_tensor(path: str | Path) -> torch.Tensor:
+    flow_path = Path(path)
+    load_errors = (RuntimeError, UnpicklingError, AttributeError, TypeError, ValueError)
+    try:
+        flow_tensor = torch.load(flow_path, map_location="cpu", weights_only=True)
+    except load_errors:
+        # Flow cache files are trusted local tensor dumps created by precompute_flow.py.
+        flow_tensor = torch.load(flow_path, map_location="cpu", weights_only=False)
+    if not isinstance(flow_tensor, torch.Tensor):
+        raise TypeError(f"Expected flow cache tensor at {flow_path}, got {type(flow_tensor).__name__}")
+    if tuple(flow_tensor.shape) != (2, 64, 64):
+        raise ValueError(f"Expected flow tensor shape (2, 64, 64), got {tuple(flow_tensor.shape)}")
+    if flow_tensor.dtype != torch.float32:
+        flow_tensor = flow_tensor.float()
+    if torch.isnan(flow_tensor).any():
+        raise ValueError(f"Flow tensor contains NaN values: {flow_path}")
+    return flow_tensor
+
+
+def verify_flow_cache(image_dir: str | Path, cache_dir: str | Path) -> Dict[str, object]:
+    images = discover_celeba_images(image_dir)
+    cache_path = Path(cache_dir)
+    expected_stems = {image_path.stem for image_path in images}
+    actual_files = list(cache_path.glob("*_flow.pt")) if cache_path.exists() else []
+    actual_stems = {path.name[: -len("_flow.pt")] for path in actual_files}
+    missing_stems = sorted(expected_stems - actual_stems)
+    extra_stems = sorted(actual_stems - expected_stems)
+    return {
+        "count": len(actual_files),
+        "expected_count": len(expected_stems),
+        "missing": missing_stems,
+        "missing_count": len(missing_stems),
+        "extra": extra_stems,
+        "extra_count": len(extra_stems),
+        "cache_dir": str(cache_path),
+    }
 
 
 class CelebAFramePairDataset(Dataset):
@@ -160,6 +211,8 @@ class CelebAFramePairDataset(Dataset):
         transform: Optional[Callable] = None,
         train: bool = True,
         limit: Optional[int] = None,
+        flow_cache_dir: str | Path | None = None,
+        pairing_mode: PairingMode = "default",
     ) -> None:
         self.image_paths = discover_celeba_images(image_dir)
         if limit is not None:
@@ -175,6 +228,8 @@ class CelebAFramePairDataset(Dataset):
         self.cross_identity_candidates: Dict[int, List[int]] = {}
         self.has_identity_file = False
         self._fake_fraction = Fraction(str(fake_ratio)).limit_denominator(1000)
+        self.flow_cache_dir = Path(flow_cache_dir) if flow_cache_dir is not None else None
+        self.pairing_mode = pairing_mode
         self._load_identity_pairs()
 
     def _load_identity_pairs(self) -> None:
@@ -215,6 +270,16 @@ class CelebAFramePairDataset(Dataset):
             raise IndexError(index)
 
         anchor_path = self.image_paths[index]
+        flow_tensor: Optional[torch.Tensor] = None
+        if self.flow_cache_dir is not None:
+            flow_tensor = _load_flow_tensor(self.flow_cache_dir / f"{anchor_path.stem}_flow.pt")
+
+        if self.pairing_mode == "adjacent_cache":
+            sample = self._getitem_adjacent_cache(index=index, anchor_path=anchor_path)
+            if flow_tensor is not None:
+                sample["flow"] = flow_tensor
+            return sample
+
         is_fake = self._is_fake_index(index)
 
         if is_fake:
@@ -244,6 +309,40 @@ class CelebAFramePairDataset(Dataset):
             )
             label = 0
 
+        sample: Dict[str, object] = {
+            "frame_a": frame_a,
+            "frame_b": frame_b,
+            "label": torch.tensor(label, dtype=torch.long),
+            "metadata": metadata.__dict__,
+        }
+        if flow_tensor is not None:
+            sample["flow"] = flow_tensor
+        return sample
+
+    def _getitem_adjacent_cache(self, *, index: int, anchor_path: Path) -> Dict[str, object]:
+        pair_index = self._select_adjacent_partner(index)
+        pair_path = self.image_paths[pair_index]
+        frame_a = self._load_tensor(anchor_path)
+        frame_b = self._load_tensor(pair_path)
+        anchor_identity = self.identity_lookup.get(anchor_path.name)
+        pair_identity = self.identity_lookup.get(pair_path.name)
+        if self.has_identity_file and anchor_identity is not None and pair_identity is not None:
+            label = 0 if anchor_identity == pair_identity else 1
+            pair_type = "real" if label == 0 else "fake"
+            identity_value: Optional[int] = anchor_identity if label == 0 else None
+            strategy = "adjacent_cache_identity_match"
+        else:
+            label = int(self._is_fake_index(index))
+            pair_type = "real" if label == 0 else "fake"
+            identity_value = anchor_identity
+            strategy = "adjacent_cache_fallback_label"
+        metadata = PairMetadata(
+            anchor_path=str(anchor_path),
+            pair_path=str(pair_path),
+            pair_type=pair_type,
+            pair_strategy=strategy,
+            identity=identity_value,
+        )
         return {
             "frame_a": frame_a,
             "frame_b": frame_b,
@@ -287,24 +386,27 @@ class CelebAFramePairDataset(Dataset):
                 offset = group.index(index)
                 pair_index = group[(offset + 1) % len(group)]
                 return pair_index, identity_value, "same_identity"
-            pair_index = min(index + 1, len(self.image_paths) - 1)
-            if pair_index == index:
-                pair_index = max(0, index - 1)
+            pair_index = self._select_adjacent_partner(index)
             return pair_index, identity_value, "identity_singleton_adjacent"
 
-        pair_index = min(index + 1, len(self.image_paths) - 1)
-        if pair_index == index:
-            pair_index = max(0, index - 1)
+        pair_index = self._select_adjacent_partner(index)
         return pair_index, None, "adjacent_fallback"
+
+    def _select_adjacent_partner(self, index: int) -> int:
+        return _select_adjacent_partner_index(index, len(self.image_paths))
 
 
 def collate_frame_pair_batch(batch: Sequence[FramePairSample]) -> Dict[str, object]:
-    return {
+    collated: Dict[str, object] = {
         "frame_a": torch.stack([sample["frame_a"] for sample in batch]),
         "frame_b": torch.stack([sample["frame_b"] for sample in batch]),
         "label": torch.stack([sample["label"] for sample in batch]),
         "metadata": [sample["metadata"] for sample in batch],
     }
+    if all("flow" in sample for sample in batch):
+        flow_tensors = [cast(torch.Tensor, sample.get("flow")) for sample in batch]
+        collated["flow"] = torch.stack(flow_tensors)
+    return collated
 
 
 def _get_float(mapping: Mapping[str, object], key: str, default: float) -> float:
@@ -372,6 +474,8 @@ def create_celeba_dataloader(
     split: str = "train",
     shuffle: Optional[bool] = None,
     limit: Optional[int] = None,
+    include_flow: Optional[bool] = None,
+    pairing_mode: Optional[PairingMode] = None,
 ) -> DataLoader:
     if isinstance(config, (str, Path)):
         config = load_config(config)
@@ -380,10 +484,13 @@ def create_celeba_dataloader(
     paths = typed_config["paths"]
     dataset_cfg = typed_config["dataset"]
     dataloader_cfg = typed_config["dataloader"]
+    phase3_cfg = cast(Mapping[str, object], typed_config.get("phase3", {}))
     split = split.lower()
     if split not in {"train", "val", "test"}:
         raise ValueError(f"Unsupported split: {split}")
 
+    resolved_include_flow = bool(phase3_cfg.get("include_flow", False)) if include_flow is None else include_flow
+    resolved_pairing_mode = cast(PairingMode, phase3_cfg.get("pairing_mode", "default")) if pairing_mode is None else pairing_mode
     dataset = CelebAFramePairDataset(
         image_dir=paths["image_dir"],
         identity_file=paths.get("identity_file"),
@@ -392,6 +499,8 @@ def create_celeba_dataloader(
         gaussian_noise_std=_get_float(dataset_cfg, "gaussian_noise_std", 0.05),
         train=(split == "train"),
         limit=limit,
+        flow_cache_dir=paths.get("flow_cache_dir") if resolved_include_flow else None,
+        pairing_mode=resolved_pairing_mode,
     )
     split_indices = list(_resolve_split_indices(len(dataset), dataset_cfg, split))
     dataset = Subset(dataset, split_indices)

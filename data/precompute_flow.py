@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Iterable, List
 
 import cv2
+import numpy as np
 import torch
 from tqdm import tqdm
 
-from data.celeba_loader import discover_celeba_images
+from data.celeba_loader import _select_adjacent_partner_index, discover_celeba_images, verify_flow_cache
 
 
 def _load_grayscale(path: Path, image_size: int) -> torch.Tensor:
@@ -23,10 +24,11 @@ def _load_grayscale(path: Path, image_size: int) -> torch.Tensor:
 
 
 def compute_farneback_flow(frame_a: torch.Tensor, frame_b: torch.Tensor) -> torch.Tensor:
+    initial_flow = np.zeros((frame_a.shape[0], frame_a.shape[1], 2), dtype=np.float32)
     flow = cv2.calcOpticalFlowFarneback(
         frame_a.numpy(),
         frame_b.numpy(),
-        None,
+        initial_flow,
         pyr_scale=0.5,
         levels=3,
         winsize=15,
@@ -52,9 +54,7 @@ def precompute_flow(
     out_path.mkdir(parents=True, exist_ok=True)
 
     for idx, image_path in enumerate(tqdm(images, desc="Precomputing optical flow")):
-        partner_index = min(idx + 1, len(images) - 1)
-        if partner_index == idx:
-            partner_index = max(0, idx - 1)
+        partner_index = _select_adjacent_partner_index(idx, len(images))
         frame_a = _load_grayscale(image_path, image_size=image_size)
         frame_b = _load_grayscale(images[partner_index], image_size=image_size)
         flow = compute_farneback_flow(frame_a, frame_b)
@@ -84,6 +84,9 @@ def main() -> None:
     )
     duration = time.time() - start
     print(f"Precomputed {count} flow tensors in {duration:.2f}s")
+
+
+__all__ = ["compute_farneback_flow", "main", "precompute_flow", "verify_flow_cache"]
 
 
 if __name__ == "__main__":
