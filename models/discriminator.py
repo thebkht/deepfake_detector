@@ -13,6 +13,12 @@ from models.branch_b import BranchB_Spatiotemporal
 from models.branch_c import BranchC_Physics
 
 
+BRANCH_A_DIM = 2048
+BRANCH_B_DIM = 32
+BRANCH_C_DIM = 28
+FUSION_DIM_2108 = BRANCH_A_DIM + BRANCH_B_DIM + BRANCH_C_DIM
+
+
 class _SchedulerWithStateDict(Protocol):
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None: ...
 
@@ -44,7 +50,7 @@ class DiscriminatorPhase2(nn.Module):
         self.backbone_train_last_n = backbone_train_last_n
         self.fusion = nn.Sequential(
             nn.Dropout(dropout),
-            nn.Linear(2048 + self.branch_b.output_dim, 512),
+            nn.Linear(BRANCH_A_DIM + self.branch_b.output_dim, 512),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout(0.3),
             nn.Linear(512, 128),
@@ -130,9 +136,10 @@ class DiscriminatorPhase3(nn.Module):
         self.branch_a = BranchAEncoder()
         self.branch_b = BranchB_Spatiotemporal(self.branch_a)
         self.branch_c = BranchC_Physics()
+        self.fusion_dim = FUSION_DIM_2108
         self.fusion = nn.Sequential(
             nn.Dropout(dropout),
-            nn.Linear(2048 + self.branch_b.output_dim + self.branch_c.output_dim, 512),
+            nn.Linear(self.fusion_dim, 512),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout(0.3),
             nn.Linear(512, 128),
@@ -162,8 +169,51 @@ class DiscriminatorPhase3(nn.Module):
             feat_a = self.branch_a(frame_a).detach()
             feat_b = self.branch_b(frame_a, frame_b).detach()
         feat_c = self.branch_c(frame_a, frame_b, flow)
-        logits = self.fusion(torch.cat([feat_a, feat_b, feat_c], dim=1))
+        fused = torch.cat([feat_a, feat_b, feat_c], dim=1)
+        if fused.shape[-1] != self.fusion_dim:
+            raise ValueError(f"Expected fusion dim {self.fusion_dim}, got {fused.shape[-1]}")
+        logits = self.fusion(fused)
         return logits.squeeze(1)
+
+
+class DiscriminatorPhase4(nn.Module):
+    """Phase 4 discriminator that mirrors Phase 3 and fine-tunes all branches."""
+
+    def __init__(self, dropout: float = 0.3) -> None:
+        super().__init__()
+        self.branch_a = BranchAEncoder()
+        self.branch_b = BranchB_Spatiotemporal(self.branch_a)
+        self.branch_c = BranchC_Physics()
+        self.branch_dims = {"a": BRANCH_A_DIM, "b": BRANCH_B_DIM, "c": BRANCH_C_DIM}
+        self.fusion_contract = "2108"
+        self.fusion_dim = FUSION_DIM_2108
+        self.fusion = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(self.fusion_dim, 512),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(512, 128),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(128, 1),
+        )
+        self.unfreeze_all()
+
+    def unfreeze_all(self) -> None:
+        for parameter in self.parameters():
+            parameter.requires_grad = True
+
+    def forward_with_branch_features(self, frame_a: Tensor, frame_b: Tensor, flow: Tensor) -> dict[str, Tensor]:
+        feat_a = self.branch_a(frame_a)
+        feat_b = self.branch_b(frame_a, frame_b)
+        feat_c = self.branch_c(frame_a, frame_b, flow)
+        fused = torch.cat([feat_a, feat_b, feat_c], dim=1)
+        if fused.shape[-1] != self.fusion_dim:
+            raise ValueError(f"Expected fusion dim {self.fusion_dim}, got {fused.shape[-1]}")
+        logits = self.fusion(fused).squeeze(1)
+        return {"a": feat_a, "b": feat_b, "c": feat_c, "logit": logits}
+
+    def forward(self, frame_a: Tensor, frame_b: Tensor, flow: Tensor) -> Tensor:
+        return self.forward_with_branch_features(frame_a, frame_b, flow)["logit"]
 
 
 def load_phase2_into_phase3(model: DiscriminatorPhase3, path: Path) -> None:
@@ -217,13 +267,31 @@ def load_phase3_checkpoint(
     return int(checkpoint["epoch"]) + 1
 
 
+def load_phase3_into_phase4(model: DiscriminatorPhase4, path: Path) -> dict[str, Any]:
+    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    state = checkpoint["model_state_dict"]
+    if not isinstance(state, dict):
+        raise TypeError("Checkpoint model_state_dict must be a dict")
+    incompatible = model.load_state_dict(state, strict=True)
+    if incompatible.missing_keys or incompatible.unexpected_keys:
+        raise RuntimeError(
+            f"Unexpected Phase 4 load result: missing={incompatible.missing_keys}, unexpected={incompatible.unexpected_keys}"
+        )
+    model.unfreeze_all()
+    metadata = checkpoint.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
 __all__ = [
     "DiscriminatorPhase2",
     "DiscriminatorPhase3",
+    "DiscriminatorPhase4",
+    "FUSION_DIM_2108",
     "_reject_legacy_branch_b_keys",
     "_remap_phase1_encoder_keys",
     "load_phase2_checkpoint",
     "load_phase2_into_phase3",
     "load_phase3_checkpoint",
+    "load_phase3_into_phase4",
     "load_pretrained_branch_a",
 ]

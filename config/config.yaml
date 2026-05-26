@@ -100,3 +100,42 @@ phase3:
   early_stopping:
     patience_overfit: 5
     val_loss_ceiling: 0.45
+
+phase4:
+  epochs: 20
+  device: mps
+  learning_rate: 0.00005
+  optimizer: adam
+  betas:
+    - 0.5
+    - 0.999
+  scheduler: CosineAnnealingLR
+  scheduler_t_max: 20
+  dropout: 0.3
+  seed: 42
+  checkpoint_name: phase4_ensemble.pt
+  pretrained_phase3: phase3_a_b_c.pt
+  fusion_contract: "2108"
+  fusion_dim: 2108
+  branch_dims:
+    a: 2048
+    b: 32
+    c: 28
+  loss:
+    bce_weight: 0.7
+    hinge_weight: 0.3
+  pairing_mode: adjacent_cache
+  include_flow: true
+  dataloader:
+    num_workers: 2
+  targets:
+    balanced_accuracy: 0.944
+    f1: 0.93
+  early_stopping:
+    patience_overfit: 5
+    patience_ceiling: 3
+    patience_val_metric: 4
+    val_metric: balanced_accuracy
+    warmup_epochs: 3
+    val_loss_ceiling: 0.45
+    enable_loss_ceiling: true

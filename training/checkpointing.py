@@ -22,6 +22,7 @@ class CheckpointPayload:
     scheduler_state_dict: Optional[Dict[str, Any]]
     best_validation_metrics: Dict[str, float]
     config: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 def save_checkpoint(path: str | Path, payload: CheckpointPayload) -> None:
@@ -36,6 +37,7 @@ def save_checkpoint(path: str | Path, payload: CheckpointPayload) -> None:
             "scheduler_state_dict": payload.scheduler_state_dict,
             "best_validation_metrics": payload.best_validation_metrics,
             "config": payload.config,
+            "metadata": payload.metadata,
         },
         checkpoint_path,
     )
@@ -70,6 +72,7 @@ def load_checkpoint(
         scheduler_state_dict=scheduler_state,
         best_validation_metrics=dict(checkpoint.get("best_validation_metrics", {})),
         config=checkpoint.get("config"),
+        metadata=checkpoint.get("metadata"),
     )
 
 

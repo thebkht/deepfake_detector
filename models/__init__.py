@@ -6,9 +6,11 @@ from models.branch_c import BranchC_Physics
 from models.discriminator import (
     DiscriminatorPhase2,
     DiscriminatorPhase3,
+    DiscriminatorPhase4,
     load_phase2_checkpoint,
     load_phase2_into_phase3,
     load_phase3_checkpoint,
+    load_phase3_into_phase4,
     load_pretrained_branch_a,
 )
 
@@ -19,8 +21,10 @@ __all__ = [
     "BranchC_Physics",
     "DiscriminatorPhase2",
     "DiscriminatorPhase3",
+    "DiscriminatorPhase4",
     "load_phase2_checkpoint",
     "load_phase2_into_phase3",
     "load_phase3_checkpoint",
+    "load_phase3_into_phase4",
     "load_pretrained_branch_a",
 ]
