@@ -293,13 +293,12 @@ This reference table describes the proposal target. The current repository only 
 
 ## Checkpoint Registry
 
-| File | Phase | Contents | Gate |
-| ---- | ----- | -------- | ---- |
-| `phase1_branch_a_best.pt` | 1 | Branch A conv + FC | acc ≥ 77%, F1 ≥ 0.70 ✅ |
-| `phase2_a_b.pt` | 2 | Legacy pre-Run 3 Branch A + Branch B + FC | acc ≥ 88%, F1 ≥ 0.88 |
-| `phase2_a_b_run3.pt` | 2 | Shared-encoder Run 3 Phase 2 checkpoint | acc ≥ 88%, F1 ≥ 0.88 |
-| `phase3_a_b_c.pt` | 3 | A + B (frozen) + Branch C + FC | acc ≥ 83%, F1 ≥ 0.80 |
-| `phase4_ensemble.pt` | 4 | All branches unfrozen, fine-tuned | B+C ≥ 94.4%, F1 ≥ 0.93 |
+| File | Phase | Contents | Status |
+| ---- | ----- | -------- | ------ |
+| `phase1_branch_a_best.pt` | 1 | Branch A conv + FC | Gate cleared: acc ≥ 77%, F1 ≥ 0.70 |
+| `phase2_a_b.pt` | 2 | Current Phase 2 baseline in this workspace; verify provenance before reuse because older legacy Phase 2 runs also exist locally | Gate cleared in prior run: acc ≥ 88%, F1 ≥ 0.88 |
+| `phase3_a_b_c.pt` | 3 | A + B (frozen) + Branch C + FC | Gate cleared at epoch 8: balanced acc `0.8741`, F1 `0.9067`, AUC-ROC `0.9484`, loss `0.2726` |
+| `phase4_ensemble.pt` | 4 | All branches unfrozen, fine-tuned | Not created yet; target B+C ≥ 94.4%, F1 ≥ 0.93 |
 
 ---
 
