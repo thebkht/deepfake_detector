@@ -124,6 +124,17 @@ phase4:
   loss:
     bce_weight: 0.7
     hinge_weight: 0.3
+    real_weight: 1.5
+    fake_weight: 1.0
+    margin: 0.8
+  staged_unfreezing:
+    enabled: true
+    fusion_epochs: 7
+    branches_bc_epochs: 7
+    branch_a_train_last_n: 2
+    fusion_lr: 0.00005
+    branches_bc_lr: 0.00002
+    branch_a_lr: 0.000005
   pairing_mode: adjacent_cache
   include_flow: true
   dataloader:

@@ -22,7 +22,7 @@ from models import (
 from models.branch_b import SUMMARY_FEATURE_NAMES, _scalar_stats
 from models.discriminator import FUSION_DIM_2108
 from evaluation.inference_handoff import write_inference_contract
-from training.losses import CombinedBCEHingeLoss, HingeLoss
+from training.losses import AsymmetricCombinedLoss, CombinedBCEHingeLoss, HingeLoss
 
 
 # GOLDEN_BRANCH_B_SUMMARY is a snapshot of the committed 8-D summary at seed 0 — not a
@@ -459,6 +459,30 @@ class LossTestCase(unittest.TestCase):
 
         self.assertAlmostEqual(float(loss.item()), float(expected.item()), places=6)
 
+    def test_asymmetric_combined_loss_uses_fake_positive_convention(self) -> None:
+        logits = torch.tensor([-1.2, 0.9, 0.4, -0.2], dtype=torch.float32)
+        labels = torch.tensor([0.0, 1.0, 0.0, 1.0], dtype=torch.float32)
+
+        criterion = AsymmetricCombinedLoss(
+            bce_weight=0.7,
+            hinge_weight=0.3,
+            real_weight=2.0,
+            fake_weight=1.0,
+            margin=0.8,
+        )
+        loss = criterion(logits, labels)
+
+        bce = torch.nn.BCEWithLogitsLoss(reduction="none")(logits, labels)
+        weights = torch.tensor([2.0, 1.0, 2.0, 1.0], dtype=torch.float32)
+        expected_bce = (bce * weights).mean()
+        expected_hinge = (
+            torch.relu(torch.stack([0.8 + logits[0], 0.8 + logits[2]])).mean() * 2.0
+            + torch.relu(torch.stack([0.8 - logits[1], 0.8 - logits[3]])).mean()
+        )
+        expected = (0.7 * expected_bce) + (0.3 * expected_hinge)
+
+        self.assertAlmostEqual(float(loss.item()), float(expected.item()), places=6)
+
 
 class DiscriminatorPhase4TestCase(unittest.TestCase):
     def _phase3_checkpoint(self) -> Path:
@@ -479,15 +503,39 @@ class DiscriminatorPhase4TestCase(unittest.TestCase):
         self.addCleanup(lambda: checkpoint_path.unlink(missing_ok=True))
         return checkpoint_path
 
-    def test_phase4_loads_phase3_weights_and_unfreezes_all(self) -> None:
+    def test_phase4_loads_phase3_weights_and_starts_fusion_only(self) -> None:
         checkpoint_path = self._phase3_checkpoint()
         model = DiscriminatorPhase4()
 
         metadata = load_phase3_into_phase4(model, checkpoint_path)
 
         self.assertEqual(metadata["fusion_contract"], "2108")
-        for parameter in model.parameters():
+        for parameter in model.branch_a.parameters():
+            self.assertFalse(parameter.requires_grad)
+        for parameter in model.branch_b.expander.parameters():
+            self.assertFalse(parameter.requires_grad)
+        for parameter in model.branch_c.parameters():
+            self.assertFalse(parameter.requires_grad)
+        for parameter in model.fusion.parameters():
             self.assertTrue(parameter.requires_grad)
+
+    def test_phase4_staged_trainability(self) -> None:
+        model = DiscriminatorPhase4()
+
+        model.set_phase4_trainability(branch_a_train_last_n=0, branch_b_expander=True, branch_c=True)
+
+        for parameter in model.branch_a.parameters():
+            self.assertFalse(parameter.requires_grad)
+        for parameter in model.branch_b.expander.parameters():
+            self.assertTrue(parameter.requires_grad)
+        for parameter in model.branch_c.parameters():
+            self.assertTrue(parameter.requires_grad)
+
+        model.set_phase4_trainability(branch_a_train_last_n=2, branch_b_expander=True, branch_c=True)
+
+        for index, block in enumerate(model.branch_a.features):
+            for parameter in block.parameters():
+                self.assertEqual(parameter.requires_grad, index >= 3)
 
     def test_phase4_forward_with_branch_features_shapes(self) -> None:
         model = DiscriminatorPhase4()

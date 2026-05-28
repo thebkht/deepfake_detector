@@ -196,11 +196,55 @@ class DiscriminatorPhase4(nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(128, 1),
         )
-        self.unfreeze_all()
+        self._branch_a_train_last_n = len(self.branch_a.features)
+        self._branch_b_expander_trainable = True
+        self._branch_c_trainable = True
+        self.set_phase4_trainability(branch_a_train_last_n=0, branch_b_expander=False, branch_c=False)
 
     def unfreeze_all(self) -> None:
         for parameter in self.parameters():
             parameter.requires_grad = True
+        self._branch_a_train_last_n = len(self.branch_a.features)
+        self._branch_b_expander_trainable = True
+        self._branch_c_trainable = True
+
+    def set_phase4_trainability(
+        self,
+        *,
+        branch_a_train_last_n: int = 0,
+        branch_b_expander: bool = False,
+        branch_c: bool = False,
+    ) -> None:
+        if branch_a_train_last_n < 0 or branch_a_train_last_n > len(self.branch_a.features):
+            raise ValueError(
+                f"branch_a_train_last_n must be between 0 and {len(self.branch_a.features)}, got {branch_a_train_last_n}"
+            )
+
+        self._branch_a_train_last_n = branch_a_train_last_n
+        self._branch_b_expander_trainable = branch_b_expander
+        self._branch_c_trainable = branch_c
+
+        self.branch_a.set_trainable_blocks(train_last_n=branch_a_train_last_n)
+        for parameter in self.branch_b.expander.parameters():
+            parameter.requires_grad = branch_b_expander
+        for parameter in self.branch_c.parameters():
+            parameter.requires_grad = branch_c
+        for parameter in self.fusion.parameters():
+            parameter.requires_grad = True
+
+    def train(self, mode: bool = True) -> "DiscriminatorPhase4":
+        super().train(mode)
+        if not mode:
+            return self
+
+        frozen_until = max(0, len(self.branch_a.features) - self._branch_a_train_last_n)
+        for block_index in range(frozen_until):
+            self.branch_a.features[block_index].eval()
+        for block_index in range(frozen_until, len(self.branch_a.features)):
+            self.branch_a.features[block_index].train()
+        self.branch_b.expander.train(self._branch_b_expander_trainable)
+        self.branch_c.train(self._branch_c_trainable)
+        return self
 
     def forward_with_branch_features(self, frame_a: Tensor, frame_b: Tensor, flow: Tensor) -> dict[str, Tensor]:
         feat_a = self.branch_a(frame_a)
@@ -277,7 +321,6 @@ def load_phase3_into_phase4(model: DiscriminatorPhase4, path: Path) -> dict[str,
         raise RuntimeError(
             f"Unexpected Phase 4 load result: missing={incompatible.missing_keys}, unexpected={incompatible.unexpected_keys}"
         )
-    model.unfreeze_all()
     metadata = checkpoint.get("metadata")
     return metadata if isinstance(metadata, dict) else {}
 

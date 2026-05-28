@@ -20,7 +20,7 @@ from evaluation.inference_handoff import write_inference_contract
 from models import DiscriminatorPhase4, load_phase3_into_phase4
 from training.batch_preview import maybe_save_train_preview, maybe_save_val_previews
 from training.checkpointing import CheckpointPayload, load_checkpoint, save_checkpoint
-from training.losses import CombinedBCEHingeLoss
+from training.losses import AsymmetricCombinedLoss
 from training.overfit_stop import OverfitStopConfig, OverfitStopMonitor, ValMetricEarlyStop, ValMetricStopConfig
 from training.run_artifacts import write_confusion_matrix_artifacts, write_results_plot
 from training.tracker import Tracker
@@ -49,6 +49,15 @@ class EpochResult:
     f1: float
     learning_rate: float
     duration_seconds: float
+
+
+@dataclass(frozen=True)
+class Phase4Stage:
+    name: str
+    branch_a_train_last_n: int
+    branch_b_expander: bool
+    branch_c: bool
+    learning_rate: float
 
 
 def _build_optimizer(model: DiscriminatorPhase4, phase4_cfg: Dict[str, Any]) -> Adam:
@@ -95,6 +104,56 @@ def _resolve_val_metric_early_stopping(phase4_cfg: Dict[str, Any]) -> ValMetricS
 
 def _serialize_history(path: Path, history: list[EpochResult]) -> None:
     path.write_text(json.dumps([asdict(entry) for entry in history], indent=2), encoding="utf-8")
+
+
+def _phase4_stage_for_epoch(epoch: int, phase4_cfg: Dict[str, Any], *, total_branch_a_blocks: int) -> Phase4Stage:
+    stage_cfg = _as_str_key_mapping(phase4_cfg.get("staged_unfreezing", {}), context="phase4.staged_unfreezing")
+    base_lr = _as_float(phase4_cfg["learning_rate"], context="phase4.learning_rate")
+    if not bool(stage_cfg.get("enabled", True)):
+        return Phase4Stage(
+            name="all_branches",
+            branch_a_train_last_n=total_branch_a_blocks,
+            branch_b_expander=True,
+            branch_c=True,
+            learning_rate=base_lr,
+        )
+
+    fusion_epochs = int(stage_cfg.get("fusion_epochs", 10))
+    branches_bc_epochs = int(stage_cfg.get("branches_bc_epochs", 10))
+    branch_a_train_last_n = int(stage_cfg.get("branch_a_train_last_n", 2))
+    if epoch <= fusion_epochs:
+        return Phase4Stage(
+            name="fusion_only",
+            branch_a_train_last_n=0,
+            branch_b_expander=False,
+            branch_c=False,
+            learning_rate=_as_float(stage_cfg.get("fusion_lr", base_lr), context="phase4.staged_unfreezing.fusion_lr"),
+        )
+    if epoch <= fusion_epochs + branches_bc_epochs:
+        return Phase4Stage(
+            name="branches_bc",
+            branch_a_train_last_n=0,
+            branch_b_expander=True,
+            branch_c=True,
+            learning_rate=_as_float(stage_cfg.get("branches_bc_lr", base_lr), context="phase4.staged_unfreezing.branches_bc_lr"),
+        )
+    return Phase4Stage(
+        name="branch_a_tail",
+        branch_a_train_last_n=branch_a_train_last_n,
+        branch_b_expander=True,
+        branch_c=True,
+        learning_rate=_as_float(stage_cfg.get("branch_a_lr", base_lr), context="phase4.staged_unfreezing.branch_a_lr"),
+    )
+
+
+def _apply_phase4_stage(model: DiscriminatorPhase4, optimizer: Adam, stage: Phase4Stage) -> None:
+    model.set_phase4_trainability(
+        branch_a_train_last_n=stage.branch_a_train_last_n,
+        branch_b_expander=stage.branch_b_expander,
+        branch_c=stage.branch_c,
+    )
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = stage.learning_rate
 
 
 def _load_upstream_summary(runs_dir: Path, *, phase: int, preferred_runs: tuple[str, ...]) -> dict[str, Any]:
@@ -253,17 +312,30 @@ def train_phase4(
     phase3_path = checkpoints_dir / str(phase4_cfg["pretrained_phase3"])
     phase3_metadata = load_phase3_into_phase4(model, phase3_path)
     model = model.to(device)
+    initial_stage = _phase4_stage_for_epoch(1, phase4_cfg, total_branch_a_blocks=len(model.branch_a.features))
+    model.set_phase4_trainability(
+        branch_a_train_last_n=initial_stage.branch_a_train_last_n,
+        branch_b_expander=initial_stage.branch_b_expander,
+        branch_c=initial_stage.branch_c,
+    )
 
     optimizer = _build_optimizer(model, phase4_cfg)
     scheduler = _build_scheduler(optimizer, phase4_cfg)
     loss_cfg = _as_str_key_mapping(phase4_cfg["loss"], context="phase4.loss")
-    criterion = CombinedBCEHingeLoss(
+    criterion = AsymmetricCombinedLoss(
         bce_weight=_as_float(loss_cfg["bce_weight"], context="phase4.loss.bce_weight"),
         hinge_weight=_as_float(loss_cfg["hinge_weight"], context="phase4.loss.hinge_weight"),
+        real_weight=_as_float(loss_cfg.get("real_weight", 1.5), context="phase4.loss.real_weight"),
+        fake_weight=_as_float(loss_cfg.get("fake_weight", 1.0), context="phase4.loss.fake_weight"),
+        margin=_as_float(loss_cfg.get("margin", 0.8), context="phase4.loss.margin"),
     )
 
     flow_cache_report = verify_flow_cache(paths_cfg["image_dir"], paths_cfg["flow_cache_dir"])
-    if int(flow_cache_report["missing_count"]) != 0 or int(flow_cache_report["extra_count"]) != 0:
+    missing_flow_count = flow_cache_report["missing_count"]
+    extra_flow_count = flow_cache_report["extra_count"]
+    if not isinstance(missing_flow_count, int) or not isinstance(extra_flow_count, int):
+        raise TypeError("Flow cache report counts must be integers")
+    if missing_flow_count != 0 or extra_flow_count != 0:
         raise RuntimeError("Flow cache verification failed for Phase 4")
 
     train_loader = create_celeba_dataloader(
@@ -316,6 +388,12 @@ def train_phase4(
     try:
         with suppress_console_input():
             for epoch in range(start_epoch, int(phase4_cfg["epochs"]) + 1):
+                stage = _phase4_stage_for_epoch(
+                    epoch,
+                    phase4_cfg,
+                    total_branch_a_blocks=len(model.branch_a.features),
+                )
+                _apply_phase4_stage(model, optimizer, stage)
                 train_metrics, _, _ = _run_epoch(
                     model,
                     train_loader,
@@ -462,7 +540,18 @@ def train_phase4(
             "scheduler": str(phase4_cfg["scheduler"]),
             "scheduler_t_max": int(phase4_cfg["scheduler_t_max"]),
             "checkpoint_metric": "balanced_accuracy",
-            "loss": {"bce_weight": float(loss_cfg["bce_weight"]), "hinge_weight": float(loss_cfg["hinge_weight"])},
+            "loss": {
+                "name": "AsymmetricCombinedLoss",
+                "bce_weight": float(loss_cfg["bce_weight"]),
+                "hinge_weight": float(loss_cfg["hinge_weight"]),
+                "real_weight": float(loss_cfg.get("real_weight", 1.5)),
+                "fake_weight": float(loss_cfg.get("fake_weight", 1.0)),
+                "margin": float(loss_cfg.get("margin", 0.8)),
+            },
+            "staged_unfreezing": _as_str_key_mapping(
+                phase4_cfg.get("staged_unfreezing", {}),
+                context="phase4.staged_unfreezing",
+            ),
         },
         "early_stopping_config": _as_str_key_mapping(phase4_cfg["early_stopping"], context="phase4.early_stopping"),
         "flow_cache": flow_cache_report,
