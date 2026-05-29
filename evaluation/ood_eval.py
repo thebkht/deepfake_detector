@@ -12,7 +12,6 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 import torch
-from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -46,6 +45,8 @@ from models.discriminator import (
     load_phase3_checkpoint,
     load_phase3_into_phase4,
 )
+
+PhaseDiscriminator = DiscriminatorPhase3 | DiscriminatorPhase4
 
 
 DEFAULT_THRESHOLD = 0.61
@@ -412,7 +413,7 @@ def evaluate_branch_a_pairs(
 
 
 def _extract_features_with_paths(
-    model: nn.Module,
+    model: PhaseDiscriminator,
     dataloader: DataLoader,
     device: torch.device,
     *,
@@ -453,7 +454,7 @@ def _extract_features_with_paths(
 
 
 def _collect_logits_with_paths(
-    model: nn.Module,
+    model: PhaseDiscriminator,
     dataloader: DataLoader,
     device: torch.device,
     *,
