@@ -146,23 +146,34 @@ def run_forensics_eval(
     resolved_threshold = threshold if threshold is not None else _load_default_threshold()
     datasets = _select_datasets(forensics_root, dataset)
 
+    print(f"[ood_eval] Datasets found: {len(datasets)}", flush=True)
+    print(f"[ood_eval] Split: {split} | Threshold: {resolved_threshold} | Mode: {mode}", flush=True)
+    print(f"[ood_eval] Device: {device} | Checkpoint: {checkpoint}", flush=True)
+
     model = _load_phase3_model(config, checkpoint, device)
-    phase4_model = (
-        _load_phase4_model(config, phase4_checkpoint, device)
-        if phase4_checkpoint is not None and phase4_checkpoint.exists()
-        else None
-    )
-    transfer_features: Optional[BranchFeatures] = None
-    transfer_labels: Optional[np.ndarray] = None
-    transfer_metadata: dict[str, Any] = {}
+    print(f"[ood_eval] Phase 3 model loaded", flush=True)
+
+    if phase4_checkpoint is not None and phase4_checkpoint.exists():
+        phase4_model = _load_phase4_model(config, phase4_checkpoint, device)
+        print(f"[ood_eval] Phase 4 model loaded", flush=True)
+    else:
+        phase4_model = None
+
     if mode in {"all", "ensemble"} and celeba_features.exists():
         transfer_features, transfer_labels, transfer_metadata = load_feature_cache(celeba_features)
-
+        print(f"[ood_eval] CelebA feature cache loaded: {transfer_labels.shape[0]} samples", flush=True)
+    else:
+        transfer_features = transfer_labels = None
+        transfer_metadata = {}
+        if mode in {"all", "ensemble"}:
+            print(f"[ood_eval] WARNING: CelebA feature cache missing at {celeba_features} — ensemble skipped", flush=True)
+    
     dataset_records = []
     pooled_parts: list[tuple[BranchFeatures, np.ndarray, np.ndarray, list[str]]] = []
 
-    for dataset_root in datasets:
+    for dataset_index, dataset_root in enumerate(datasets, start=1):
         dataset_key = _dataset_key(dataset_root)
+        print(f"\n[ood_eval] Dataset {dataset_index}/{len(datasets)}: {dataset_root.parent.name}", flush=True)
         dataset_dir = run_dir / "per_dataset" / dataset_key
         loader = create_forensics_dataloader(
             dataset_root,
@@ -190,6 +201,8 @@ def run_forensics_eval(
             "n_images": int(labels.shape[0]),
             "class_counts": _class_counts(labels),
         }
+        
+        print(f"[ood_eval]   Extracted {labels.shape[0]} samples (real={int((labels==0).sum())}, fake={int((labels==1).sum())})", flush=True)
 
         if mode in {"all", "neural"}:
             neural = evaluate_ood_neural(logits, labels, threshold=resolved_threshold)
@@ -197,6 +210,9 @@ def run_forensics_eval(
             neural_csv = dataset_dir / "phase3_per_image_scores.csv"
             _write_neural_csv(neural_csv, paths, labels, logits, resolved_threshold)
             record["per_image_scores_csv"] = str(neural_csv)
+            bal_acc = neural["default_metrics"]["balanced_accuracy"]
+            auc = neural["default_metrics"]["auc_roc"]
+            print(f"[ood_eval]   Neural: bal_acc={bal_acc:.4f} auc={auc:.4f}", flush=True)
 
         if phase4_model is not None and mode in {"all", "neural"}:
             phase4_logits, phase4_labels, _ = _collect_logits_with_paths(
@@ -214,6 +230,7 @@ def run_forensics_eval(
 
         if mode in {"all", "ensemble"}:
             if transfer_features is not None and transfer_labels is not None:
+                print(f"[ood_eval]   Running transfer ensemble (7 combos)...", flush=True)
                 transfer_results = evaluate_ood_ensemble(
                     transfer_features,
                     transfer_labels,
@@ -225,6 +242,9 @@ def run_forensics_eval(
                 ensemble_csv = dataset_dir / "ensemble_per_image_scores.csv"
                 _write_ensemble_csv(ensemble_csv, paths, labels, transfer_results)
                 record["ensemble_per_image_scores_csv"] = str(ensemble_csv)
+                b_c_acc = transfer_results.get("b_c", {}).get("metrics", {}).get("balanced_accuracy")
+                print(f"[ood_eval]   B+C bal_acc={b_c_acc:.4f}" if b_c_acc else "[ood_eval]   Ensemble done", flush=True)
+
             else:
                 record["ensemble_error"] = f"CelebA feature cache missing: {celeba_features}"
 
@@ -238,7 +258,7 @@ def run_forensics_eval(
                     limit=limit,
                     shuffle=False,
                 )
-                train_features, train_labels, _ = _extract_features_with_paths(
+                indomain_train_features, indomain_train_labels, _ = _extract_features_with_paths(
                     model,
                     train_loader,
                     device,
@@ -246,8 +266,8 @@ def run_forensics_eval(
                     max_batches=max_batches,
                 )
                 in_domain = evaluate_ood_ensemble(
-                    train_features,
-                    train_labels,
+                    indomain_train_features,
+                    indomain_train_labels,
                     features,
                     labels,
                     output_dir=dataset_dir / "in_domain",
