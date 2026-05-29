@@ -24,7 +24,7 @@ The codebase is not at full proposal parity yet. Today it includes the completed
 - Verified: RF branch-combination ensemble, neural-logit ablation, and Phase 3 threshold sweep ran under `runs/ensemble_ablation/` on the balanced test subset of `13,074` examples
 - Verified: B+C RF did not clear the proposal gate, with balanced accuracy `0.8869`, F1 `0.8837`, and AUC-ROC `0.9440`; A+B+C RF was the strongest probe in this run at balanced accuracy `0.8992`, F1 `0.8962`, and AUC-ROC `0.9471`
 - Verified: Phase 3 threshold sweep selected threshold `0.61` for best balanced accuracy `0.8850`, with F1 `0.8808`, TPR `0.8501`, and TNR `0.9198`
-- Not implemented yet: OOD evaluation
+- Verified: full forensics OOD evaluation completed under `runs/forensics_eval/` across `20,905` images; all CelebA-trained transfer ensembles fail the OOD gate, with B+C RF at balanced accuracy `0.4716` and F1 `0.4981`
 - Active runtime contract: `2048 + 32 + 28 = 2108`; the proposal-parity `2048 + 8 + 28 = 2084` fusion contract is not the current load-compatible path
 - Historical checkpoint: `checkpoints/phase2_a_b.pt` was trained on the legacy pre-Run 3 Branch B architecture and should not be treated as the current baseline
 
@@ -125,7 +125,7 @@ Branch C and Phase 3 in [models/branch_c.py](models/branch_c.py), [models/discri
 - Phase 3 enforces the current cache contract by requiring `include_flow=True` and `pairing_mode="adjacent_cache"` dataloaders, then verifying the cached flow directory before training starts
 - The repository also ships `training/checkpointing.py` and `training/losses.py`, including resume support and a standalone `HingeLoss` module for later phases
 
-This means the current code now reaches the proposal's three-branch structure and includes the Phase 4 fine-tuning path, but not the full evaluation parity. The active Phase 3 and Phase 4 path uses the current `32-D` Branch B expansion, so the runtime contract remains `2048 + 32 + 28 = 2108`. The RF ensemble and threshold-sweep artifacts are present under `runs/ensemble_ablation/`; OOD evaluation is still pending.
+This means the current code now reaches the proposal's three-branch structure and includes the Phase 4 fine-tuning path and full forensics OOD evaluation. The active Phase 3 and Phase 4 path uses the current `32-D` Branch B expansion, so the runtime contract remains `2048 + 32 + 28 = 2108`. The RF ensemble and threshold-sweep artifacts are present under `runs/ensemble_ablation/`; full transfer results are present under `runs/forensics_eval/`.
 
 Phase 4 in [models/discriminator.py](models/discriminator.py), [training/phase4_trainer.py](training/phase4_trainer.py), and [training/losses.py](training/losses.py):
 
@@ -505,6 +505,24 @@ The Phase 2 trainer uses:
 
 These are still in-domain proxy-task gates, not realistic deepfake benchmarks. The proposal's headline `94.4%` balanced-accuracy result refers to the recommended B+C ensemble on difficult OOD content, which this repository has not reproduced yet.
 
+## Forensics OOD Evaluation
+
+Full OOD artifacts are written under `runs/forensics_eval/`. The main handoff artifact for Dev 2 is `runs/forensics_eval/summary.json`, with per-image CSVs under `runs/forensics_eval/per_dataset/` and pooled confusion matrices under `runs/forensics_eval/pooled/`.
+
+Pooled transfer ensemble result across `20,905` forensics images:
+
+| Config | Balanced accuracy | F1 | AUC-ROC |
+| ------ | ----------------: | --: | ------: |
+| A only | 0.5014 | 0.6683 | 0.5344 |
+| B only | 0.4683 | 0.4764 | 0.4559 |
+| C only | 0.4996 | 0.6678 | 0.4495 |
+| A+B | 0.4820 | 0.5629 | 0.4602 |
+| A+C | 0.5021 | 0.6659 | 0.4915 |
+| B+C | 0.4716 | 0.4981 | 0.4572 |
+| A+B+C | 0.4843 | 0.5633 | 0.4635 |
+
+The OOD gate fails. The pooled confusion matrices show real-class collapse for A, C, A+C, and fake-biased combinations, while Branch B loses polarity on the forensics distribution. See `docs/final-report.md` for the final interpretation.
+
 ## Tests
 
 Run the test suite with:
@@ -538,8 +556,8 @@ Coverage currently includes:
 - Branch C and Phase 3 are implemented and trained, but the current result is still an in-domain proxy task rather than a real deepfake benchmark.
 - Phase 4 fine-tuning is implemented and has been run, but its asymmetric loss worsened the TNR/TPR balance and should not replace the Phase 3 checkpoint for deployment-style evaluation.
 - Current fake samples are cross-identity proxy negatives, not actual deepfakes.
-- Out-of-domain evaluation is not implemented.
-- Branch-combination ensemble and threshold-sweep tooling has been run on the proxy test split; B+C did not clear the proposal gate, so these results should not be treated as the final deployment result.
+- Out-of-domain evaluation is implemented and complete for the local forensics datasets, but all current transfer results fail the deployment gate.
+- Branch-combination ensemble and threshold-sweep tooling has been run on the proxy test split and the forensics OOD split; B+C did not clear either gate, so these results should not be treated as a deployment result.
 - Phase 3/4 flow-aware evaluation must keep `adjacent_cache`; switching those phases to default pairing would attach cached flow tensors to the wrong frame pair unless the cache is regenerated.
 - The proposal's direct `2048 + 8 + 28 = 2084` fusion contract is still not the active runtime contract; the current Phase 3 and Phase 4 stack uses `2048 + 32 + 28 = 2108`.
 - If `identity_CelebA.txt` is missing, real pairs fall back to adjacent-image pairing.
@@ -552,7 +570,7 @@ Coverage currently includes:
 
 The planned next steps are:
 
-1. Add out-of-domain evaluation on real deepfake data; this is the only meaningful test of the proposal's `94.4%` claim.
-2. Re-run the B+C ensemble on real OOD data rather than the cross-identity proxy task.
-3. Replace cross-identity proxy negatives with stronger fake-generation sources.
-4. Decide whether A+B+C RF should remain only a proxy-task result or become an additional comparison baseline.
+1. Replace cross-identity proxy negatives with true manipulated-face training sources.
+2. Add domain adaptation or train transfer classifiers on forensics-like manipulations instead of CelebA identity-pair features only.
+3. Rerun the same `runs/forensics_eval/` protocol after retraining.
+4. Treat A+B+C RF only as a comparison baseline unless a future OOD run clears the gate.

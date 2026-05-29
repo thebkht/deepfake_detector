@@ -51,7 +51,7 @@ The proposal is the target design, not the current implementation state.
 - Current checkpoint choice: Phase 3 is the best deployment-style candidate under the balanced objective; the final Phase 4 run improved balanced accuracy/AUC only slightly but lowered F1 and real-class TNR
 - Implemented and run on the proxy test split: random-forest ensemble tooling, single-branch probe/ablation reporting, and Phase 3 threshold-sweep tooling
 - Current ensemble result: B+C RF did not clear the proposal gate, reaching balanced accuracy `0.8869`, F1 `0.8837`, and AUC-ROC `0.9440`; A+B+C RF was strongest on the proxy task at balanced accuracy `0.8992`, F1 `0.8962`, and AUC-ROC `0.9471`
-- Not implemented now: OOD evaluation
+- Implemented and run on local forensics OOD data: full transfer evaluation under `runs/forensics_eval/` across `20,905` images; B+C RF fails with pooled balanced accuracy `0.4716`, F1 `0.4981`, and AUC-ROC `0.4572`
 - Important delta: the active runtime contract remains `2048 + 32 + 28 = 2108`; proposal-parity `2084-D` fusion is not the current load-compatible path
 
 ---
@@ -185,6 +185,7 @@ Current status from the repository state:
 - **Week 2 Dev 2 training is now complete.** `checkpoints/phase3_a_b_c.pt` exists and matches `runs/phase3_a_b_c_w2/benchmark_summary.json`. The best validation result occurs at epoch **8** with **0.8741 balanced accuracy**, **0.9067 F1**, **0.9484 AUC-ROC**, and **0.2726 loss**, which clears the configured Phase 3 gate.
 - **Week 3 Phase 4 has been executed.** Phase 4 uses the locked `2108-D` contract with stage-aware early stopping across a 30-epoch plan: 10 fusion-only epochs, 10 Branch B+C epochs, then 10 Branch A-tail epochs. Final comparison: Phase 3 `0.8790` balanced accuracy / `0.9072` F1 / `0.9480` AUC-ROC / `0.78` TNR / `0.94` TPR; Phase 4 `0.8850` balanced accuracy / `0.8955` F1 / `0.9499` AUC-ROC / `0.72` TNR / `0.97` TPR. The asymmetric fine-tune increased fake recall but worsened real specificity, so Phase 3 remains the preferred neural checkpoint.
 - **Week 3 ensemble run is complete on the proxy test split.** `runs/ensemble_ablation/summary.md` reports `13,074` balanced test examples, with B+C RF at **0.8869 balanced accuracy / 0.8837 F1 / 0.9440 AUC-ROC**, below the proposal gate. A+B+C RF is the strongest proxy-task probe at **0.8992 balanced accuracy / 0.8962 F1 / 0.9471 AUC-ROC**. The neural Phase 3 threshold sweep selects threshold `0.61` for **0.8850 balanced accuracy**, F1 `0.8808`, TPR `0.8501`, and TNR `0.9198`.
+- **Week 4 forensics OOD evaluation is complete.** `runs/forensics_eval/summary.json` is the Dev 2 handoff artifact. The pooled transfer results fail: B+C RF reaches **0.4716 balanced accuracy / 0.4981 F1 / 0.4572 AUC-ROC**, and `docs/final-report.md` records the negative transfer conclusion.
 
 ### Milestones
 
@@ -235,17 +236,17 @@ gantt
 - [x] Dev 1: Characterize Phase 4 result; Phase 3 remains the current deployment candidate because Phase 4 lowered F1 and TNR
 - [x] Dev 1/Dev 2: Implement independent logistic/RF classifiers for the canonical branch combinations (B+C recommended)
 - [x] Dev 1/Dev 2: Run all 7 ensemble combination experiments and write the resulting summary
-- [ ] Target: **B+C ensemble ≥ 94.4% balanced accuracy, F1 ≥ 0.93** — not cleared on the proxy test split
+- [ ] Target: **B+C ensemble ≥ 94.4% balanced accuracy, F1 ≥ 0.93** — not cleared on the proxy or forensics OOD split
 - [x] Save `checkpoints/phase4_ensemble.pt` from an executed Phase 4 run
 - [x] Dev 2: Implement confusion-matrix output and per-branch probe/ablation reporting
 
 ### Week 4 — Eval & Hardening
 
-- [ ] Evaluate on out-of-distribution test sets (style transfer, diffusion-generated faces)
+- [x] Evaluate on local forensics out-of-distribution test sets
 - [x] Run threshold sweep on Phase 3 checkpoint to select the best proxy-task TNR/TPR operating point
 - [x] Run proxy-task ablation/probe pass: each branch independently, all pairs, full triple
 - [ ] Profile inference time; optimize Branch C flow pre-computation
-- [ ] Write final eval report
+- [x] Write final eval report
 
 ---
 
@@ -505,7 +506,7 @@ The current repository implements this evaluation layer as feature probes over t
 - Single-branch A/B/C configs use logistic regression.
 - A+B, A+C, B+C, and A+B+C configs use `RandomForestClassifier(n_estimators=100, random_state=42)`.
 - `scripts/run_ensemble_ablation.py` balances extracted examples by class, uses an 80/20 probe split, writes normalized and raw confusion matrices for all seven configs, and runs the Phase 3 threshold sweep in the same output directory.
-- The completed proxy-task run in `runs/ensemble_ablation/` did not clear the B+C proposal gate; OOD evaluation is still required before making any deployment claim.
+- The completed proxy-task run in `runs/ensemble_ablation/` did not clear the B+C proposal gate, and the completed forensics OOD run in `runs/forensics_eval/` also fails the gate. No deployment claim is supported by the current artifacts.
 
 ### Out-of-Domain Test Sets
 
@@ -529,9 +530,9 @@ To validate OOD robustness, evaluate on:
 | **B + C ensemble**               | **94.4%**   | **94.4%**   | **0.93** | ⭐ Recommended       |
 | A + B + C full ensemble          | 89.5%       | 89.5%       | 0.86     | Note: lower than B+C |
 
-> **Insight from the proposal:** the full A+B+C ensemble underperforms B+C because Branch A introduces in-distribution bias that dilutes the OOD robustness of the physics+temporal signal. The current proxy-task run did not reproduce that pattern: A+B+C RF outperformed B+C RF on balanced accuracy, while B+C remained below the proposal gate. OOD evaluation is still required before making a deployment recommendation.
+> **Insight from the proposal:** the full A+B+C ensemble underperforms B+C because Branch A introduces in-distribution bias that dilutes the OOD robustness of the physics+temporal signal. The current proxy-task run did not reproduce that pattern: A+B+C RF outperformed B+C RF on balanced accuracy, while B+C remained below the proposal gate. The completed forensics OOD run also fails the proposal claim: B+C RF reaches only `0.4716` pooled balanced accuracy and `0.4981` F1.
 
-> **Current repo result:** the neural Phase 4 A+B+C fine-tune did not improve the balanced deployment objective enough to replace Phase 3, and the proxy-task B+C RF ensemble did not clear the proposal gate. Phase 3 remains the baseline neural checkpoint; OOD evaluation is the next meaningful test.
+> **Current repo result:** the neural Phase 4 A+B+C fine-tune did not improve the balanced deployment objective enough to replace Phase 3, and the proxy-task plus forensics B+C RF evaluations both fail the proposal gate. The final report treats this as a negative transfer result, not a deployment-ready detector.
 
 ---
 

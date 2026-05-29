@@ -2,9 +2,17 @@
 
 ## Status
 
-Week 4 Dev 1 evaluation support is implemented for the local forensics layout under `data/forensics/`. The current forensics numbers below are a smoke validation run, not the final full-run table: they use `--limit 128` per dataset and the smoke CelebA transfer cache at `runs/celeba_features/phase3_train_adjacent_cache_smoke.npz`.
+Week 4 forensics OOD evaluation is complete on all four local forensics datasets under `data/forensics/`.
 
-The full deployment table remains blocked on the full CelebA train feature cache at `runs/celeba_features/phase3_train_adjacent_cache.npz`, followed by an unrestricted forensics run.
+Primary handoff artifact for Dev 2:
+
+- `runs/forensics_eval/summary.json`
+- `runs/forensics_eval/summary.md`
+- `runs/forensics_eval/per_dataset/*/ensemble_per_image_scores.csv`
+- `runs/forensics_eval/per_dataset/*/*_confusion_matrix.png`
+- `runs/forensics_eval/pooled/*_confusion_matrix.png`
+
+The run used the full CelebA train transfer cache at `runs/celeba_features/phase3_train_adjacent_cache.npz`, the Phase 3 checkpoint at `checkpoints/phase3_a_b_c.pt`, split `test`, and the `adjacent_same_class` forensics pairing contract.
 
 ## In-Domain Proxy
 
@@ -20,57 +28,61 @@ Source: `runs/ensemble_ablation/summary.md`, balanced CelebA proxy test subset, 
 | 6 | B+C | RF | 0.8869 | 0.8837 | 0.9440 |
 | 7 | A+B+C | RF | 0.8992 | 0.8962 | 0.9471 |
 
-The B+C proposal gate is not cleared on this proxy table: balanced accuracy is `0.8869` versus the `0.944` target, and F1 is `0.8837` versus the `0.93` target.
+The B+C proposal gate was not cleared on the proxy table: balanced accuracy was `0.8869` versus the `0.944` target, and F1 was `0.8837` versus the `0.93` target.
 
-## Phase 3 Neural Threshold
+## Forensics Neural Baseline
 
-Source: `runs/ensemble_ablation/threshold_sweep.json`.
+Source: `runs/forensics_eval/summary.md`. Threshold `0.61` is the best proxy-task threshold from `runs/ensemble_ablation/threshold_sweep.json`.
 
-| Threshold | Balanced accuracy | F1 | TPR | TNR |
-| --------: | ----------------: | --: | --: | --: |
-| 0.61 | 0.8850 | 0.8808 | 0.8501 | 0.9198 |
+| Dataset | N | Bal Acc @0.5 | Bal Acc @0.61 | F1 | AUC-ROC |
+| ------- | -: | -----------: | -------------: | --: | ------: |
+| Data Set 1 | 5227 | 0.5177 | 0.5153 | 0.3724 | 0.5255 |
+| Data Set 2 | 5226 | 0.4422 | 0.4444 | 0.3316 | 0.4189 |
+| Data Set 3 | 5226 | 0.4557 | 0.4369 | 0.3203 | 0.4317 |
+| Data Set 4 | 5226 | 0.5013 | 0.4935 | 0.3248 | 0.4989 |
+| Pooled | 20905 | 0.4792 | 0.4725 | 0.3370 | 0.4675 |
 
-Forensics neural evaluation reports both default threshold `0.5` and the proxy-selected `0.61` threshold.
+The neural Phase 3 checkpoint does not transfer to the forensics distribution. Pooled balanced accuracy is below random at both thresholds.
 
-## Forensics Transfer Smoke
+## Forensics Transfer Ensemble
 
-Source: `runs/forensics_eval_smoke_all/summary.md`.
+Source: `runs/forensics_eval/summary.md`, balanced accuracy.
 
-Command:
+| Dataset | A | B | C | A+B | A+C | B+C | A+B+C |
+| ------- | --: | --: | --: | --: | --: | --: | ----: |
+| Data Set 1 | 0.5040 | 0.5021 | 0.4996 | 0.5180 | 0.4991 | 0.4978 | 0.5135 |
+| Data Set 2 | 0.5012 | 0.4319 | 0.5000 | 0.4536 | 0.5037 | 0.4380 | 0.4551 |
+| Data Set 3 | 0.5012 | 0.4374 | 0.4996 | 0.4642 | 0.5029 | 0.4516 | 0.4646 |
+| Data Set 4 | 0.4991 | 0.5018 | 0.4992 | 0.4921 | 0.5028 | 0.4991 | 0.5041 |
+| Pooled | 0.5014 | 0.4683 | 0.4996 | 0.4820 | 0.5021 | 0.4716 | 0.4843 |
 
-```bash
-.venv-mps/bin/python scripts/run_forensics_eval.py \
-  --config config/config.yaml \
-  --checkpoint checkpoints/phase3_a_b_c.pt \
-  --forensics-root data/forensics \
-  --device cpu \
-  --limit 128 \
-  --max-batches 4 \
-  --celeba-features runs/celeba_features/phase3_train_adjacent_cache_smoke.npz \
-  --run-dir runs/forensics_eval_smoke_all
-```
+No branch combination clears the proposal OOD gate. The recommended B+C architecture from the proposal reaches only `0.4716` pooled balanced accuracy and `0.4981` F1 on the full transfer protocol.
 
-This run validates the artifact schema, the `adjacent_same_class` pair contract, on-the-fly Farneback flow, per-image CSV output, and all seven ensemble combo paths. Each dataset contributed `64` real and `64` fake images.
+## Pooled Confusion Matrix Counts
 
-| Dataset | N | Neural bal acc @0.5 | Neural bal acc @0.61 | B+C transfer bal acc | A+B+C transfer bal acc |
-| ------- | -: | ------------------: | -------------------: | -------------------: | ---------------------: |
-| Data Set 1 | 128 | 0.5547 | 0.5078 | 0.4531 | 0.4453 |
-| Data Set 2 | 128 | 0.4922 | 0.4766 | 0.4531 | 0.4297 |
-| Data Set 3 | 128 | 0.4219 | 0.3984 | 0.4141 | 0.4688 |
-| Data Set 4 | 128 | 0.5234 | 0.5547 | 0.5000 | 0.5000 |
-| Pooled | 512 | 0.4980 | 0.4844 | 0.4551 | 0.4609 |
+Counts use the repository label convention: real=`0`, fake=`1`; `TN` means real predicted real, `FP` means real predicted fake, `FN` means fake predicted real, and `TP` means fake predicted fake.
 
-These are smoke-run numbers only. They should not be used as the final forensics gate result because the transfer RF was trained on a 206-row CelebA smoke cache.
+| Config | TN | FP | FN | TP | Pattern |
+| ------ | --: | --: | --: | --: | ------- |
+| A only | 59 | 10354 | 31 | 10461 | Predicts almost everything fake |
+| B only | 4735 | 5678 | 5436 | 5056 | Opposite-bias / near class-prior flip |
+| C only | 10 | 10403 | 18 | 10474 | Predicts almost everything fake |
+| A+B | 3125 | 7288 | 3527 | 6965 | Strong fake bias |
+| A+C | 203 | 10210 | 160 | 10332 | Near-total fake prediction |
+| B+C | 4384 | 6029 | 5013 | 5479 | Below-random transfer |
+| A+B+C | 3195 | 7218 | 3548 | 6944 | Strong fake bias |
+
+## Interpretation
+
+The full OOD result contradicts the proposal deployment assumption. Every transfer ensemble trained on CelebA branch features is ineffective on the four forensics datasets. Branch A and Branch C collapse almost completely into the fake class. A+B, A+C, and A+B+C inherit the same real-class failure mode. Branch B is the most diagnostic failure: its velocity features do not preserve polarity on the forensics distribution, so adding C in B+C does not recover the signal.
+
+The likely failure mode is that the transfer RFs learned CelebA-specific decision boundaries, dominated by identity-pair statistics and local proxy artifacts, rather than GAN artifact detectors. These boundaries do not transfer to the forensics images.
 
 ## Deployment Recommendation
 
-Recommended deployment configuration remains B+C RF as the architectural candidate: Branch B carries the strongest proxy signal, Branch C preserves the flow/physics channel, and Branch A is known to add in-distribution face-identity bias that can dilute OOD behavior. This is a recommendation about deployment shape, not a claim that the metric gate is cleared.
+Do not ship B+C, A+B+C, or the Phase 3 neural checkpoint as a forensics detector from this training run.
 
-Gate status:
-
-- Proxy gate: not cleared, B+C balanced accuracy `0.8869` vs target `0.944`.
-- Forensics gate: not yet measured on the full transfer protocol.
-- Neural baseline: use Phase 3 as the balanced deployment baseline; Phase 4 is characterized as a comparison checkpoint, not the preferred default.
+The defensible conclusion is negative: the current CelebA-trained feature stack is useful as an architecture/proxy-task experiment, but not as a deployed OOD deepfake detector. A production candidate would need training data with real generative manipulations or explicit domain adaptation before the Week 4 OOD gate can be reopened.
 
 ## Architecture Checklist
 
@@ -80,35 +92,4 @@ Gate status:
 - Branch B and Branch C normalization guards are covered by finite-output tests.
 - Phase freeze behavior remains covered by the existing `tests/test_model.py` Phase 2/3/4 tests.
 - No training imports are required inside `models/`.
-- `adjacent_cache` remains CelebA-only where the flow cache matches adjacent image partners.
 - Forensics evaluation intentionally uses on-the-fly Farneback flow because the forensics folders do not provide a CelebA-style flow cache.
-
-## Full-Run Checklist
-
-1. Extract the full CelebA train cache:
-
-```bash
-.venv-mps/bin/python scripts/extract_celeba_features.py \
-  --config config/config.yaml \
-  --checkpoint checkpoints/phase3_a_b_c.pt \
-  --split train \
-  --pairing-mode adjacent_cache \
-  --device mps \
-  --out runs/celeba_features/phase3_train_adjacent_cache.npz
-```
-
-2. Run unrestricted forensics transfer evaluation:
-
-```bash
-.venv-mps/bin/python scripts/run_forensics_eval.py \
-  --config config/config.yaml \
-  --checkpoint checkpoints/phase3_a_b_c.pt \
-  --phase4-checkpoint checkpoints/phase4_ensemble.pt \
-  --forensics-root data/forensics \
-  --split test \
-  --device mps \
-  --celeba-features runs/celeba_features/phase3_train_adjacent_cache.npz \
-  --run-dir runs/forensics_eval
-```
-
-3. Replace the smoke table above with `runs/forensics_eval/summary.md` values and update `docs/build-plan.md` once the full numbers exist.

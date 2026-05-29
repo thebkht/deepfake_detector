@@ -1,7 +1,7 @@
 # Hybrid Three-Branch GAN Discriminator — Build Plan
 
 > Last updated: 2026-05-29
-> Status: **Week 1 and Week 2 are gate-cleared.** The repository now includes a trained `phase3_a_b_c.pt` checkpoint plus matching run artifacts. **Week 3 Phase 4 has been executed and is not the deployment candidate**: it marginally improves balanced accuracy/AUC but worsens F1 and real-class TNR. The Week 3 RF ensemble, neural ablation, and threshold-sweep job has now run on the balanced proxy test subset. B+C RF did not clear the proposal gate. Week 4 Dev 1 OOD eval support is implemented and smoke-validated on all four local forensics datasets; the full forensics result table is pending the full CelebA train feature cache and unrestricted run.
+> Status: **Week 1 and Week 2 are gate-cleared.** The repository now includes a trained `phase3_a_b_c.pt` checkpoint plus matching run artifacts. **Week 3 Phase 4 has been executed and is not the deployment candidate**: it marginally improves balanced accuracy/AUC but worsens F1 and real-class TNR. The Week 3 RF ensemble, neural ablation, and threshold-sweep job has now run on the balanced proxy test subset. B+C RF did not clear the proposal gate. Week 4 forensics OOD evaluation is complete across all four local datasets (`20,905` images), and the OOD gate fails: B+C RF reaches only `0.4716` pooled balanced accuracy and `0.4981` F1.
 
 > **2 Engineers · 4 Weeks · OOD Robustness Target: 94.4% balanced accuracy**
 
@@ -14,7 +14,7 @@
 | 1     | 1    | Setup + Branch A            | Branch A val acc ≥ 77%, F1 ≥ 0.70; flow cache complete         |
 | 2     | 2    | Branches B & C (parallel)   | `phase2_a_b.pt` and `phase3_a_b_c.pt` both saved               |
 | 3     | 3    | Phase 4 fine-tune + separate ensemble follow-up | Phase 4 characterized; ensemble run complete; B+C gate not cleared |
-| 4     | 4    | Eval & hardening            | OOD eval complete; final report written                         |
+| 4     | 4    | Eval & hardening            | OOD eval complete; final report written; deployment gate failed |
 
 ---
 
@@ -23,7 +23,7 @@
 | Phase | Where the repo is now | Next gate |
 | ----- | --------------------- | --------- |
 | 1 | CelebA at `data/celeba/img_align_celeba` (202,599 images); Branch A encoder and baseline classifier implemented; flow cache complete at `data/flow_cache` (202,599 `*_flow.pt` files, ~7.0 GB, shape `(2, 64, 64)` float32); `test_flow_precompute_smoke` passing; loader supports same-identity real pairs, cross-identity proxy fakes, singleton-adjacent fallback, and attribute-derived pseudo-identities when true identity labels are unavailable | Keep the saved Branch A baseline and reports aligned with the stronger proxy-task configuration |
-| 2 | Branch B (`models/branch_b.py`) and the full Phase 2 A+B stack are implemented; Run 3 now shares Branch A's encoder, uses the committed 8-D summary `[vel_mean, vel_std, vel_max, vel_min, cos_sim, l2_dist, sign_consistency, abs_vel_mean]`, expands it to 32-D before fusion, and partially unfreezes the shared encoder tail. Branch C (`models/branch_c.py`), `DiscriminatorPhase3`, hinge loss, flow-aware `adjacent_cache` loading, checkpoint resume helpers, and Phase 3 CLI/trainer wiring are implemented and trained. `checkpoints/phase3_a_b_c.pt` matches `runs/phase3_a_b_c_w2/benchmark_summary.json`, with the best validation result at epoch `8`: balanced accuracy `0.8741`, F1 `0.9067`, AUC-ROC `0.9484`, loss `0.2726`. Phase 3/4 comparison eval keeps adjacent-cache flow valid and balances evaluation rows by class. Final Phase 4 results are balanced accuracy `0.8850`, F1 `0.8955`, AUC-ROC `0.9499`, TNR `0.72`, and TPR `0.97`, so Phase 3 remains the better deployment candidate under the balanced objective. The Week 3 ensemble run in `runs/ensemble_ablation/` evaluated `13,074` balanced test examples: B+C RF reached balanced accuracy `0.8869`, F1 `0.8837`, AUC-ROC `0.9440`; A+B+C RF was strongest at balanced accuracy `0.8992`, F1 `0.8962`, AUC-ROC `0.9471`; threshold `0.61` gave the best Phase 3 balanced accuracy `0.8850`. Week 4 Dev 1 added the forensics frame-pair loader, CelebA feature-cache script, OOD eval CLI, architecture contracts, and `docs/week4-ensemble-results.md`; the four-dataset smoke run at `runs/forensics_eval_smoke_all/` produced balanced per-image artifacts for 512 local forensics images. | Run full CelebA train-cache extraction, unrestricted forensics eval, then update final gate table |
+| 2 | Branch B (`models/branch_b.py`) and the full Phase 2 A+B stack are implemented; Run 3 now shares Branch A's encoder, uses the committed 8-D summary `[vel_mean, vel_std, vel_max, vel_min, cos_sim, l2_dist, sign_consistency, abs_vel_mean]`, expands it to 32-D before fusion, and partially unfreezes the shared encoder tail. Branch C (`models/branch_c.py`), `DiscriminatorPhase3`, hinge loss, flow-aware `adjacent_cache` loading, checkpoint resume helpers, and Phase 3 CLI/trainer wiring are implemented and trained. `checkpoints/phase3_a_b_c.pt` matches `runs/phase3_a_b_c_w2/benchmark_summary.json`, with the best validation result at epoch `8`: balanced accuracy `0.8741`, F1 `0.9067`, AUC-ROC `0.9484`, loss `0.2726`. Phase 3/4 comparison eval keeps adjacent-cache flow valid and balances evaluation rows by class. Final Phase 4 results are balanced accuracy `0.8850`, F1 `0.8955`, AUC-ROC `0.9499`, TNR `0.72`, and TPR `0.97`, so Phase 3 remains the better deployment candidate under the balanced objective. The Week 3 ensemble run in `runs/ensemble_ablation/` evaluated `13,074` balanced test examples: B+C RF reached balanced accuracy `0.8869`, F1 `0.8837`, AUC-ROC `0.9440`; A+B+C RF was strongest at balanced accuracy `0.8992`, F1 `0.8962`, AUC-ROC `0.9471`; threshold `0.61` gave the best Phase 3 balanced accuracy `0.8850`. Week 4 forensics OOD evaluation in `runs/forensics_eval/` evaluated `20,905` images. The transfer ensembles collapse on forensics: B+C RF reaches pooled balanced accuracy `0.4716`, F1 `0.4981`, and AUC-ROC `0.4572`; the final report is `docs/final-report.md`. | Replace proxy fake training with true manipulated-face data before reopening the OOD gate |
 
 Update this table when a gate flips so the plan stays honest for the next work session.
 
@@ -247,7 +247,7 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 
 ### Dev 1 — Architecture Review + Experiment Support
 
-- [ ] Finalize all 7 ensemble results table; confirm B+C is the deployment-recommended config
+- [x] Finalize all 7 ensemble results table; B+C is not deployment-ready on the completed OOD protocol
 - [x] Architecture review: no orphaned branches, no unbounded tensor ops, no missing gradient guards
 - [x] Support OOD eval — load Phase 3 as the neural baseline and Phase 4 as a characterized comparison checkpoint, accept image dir, output per-image scores
 
@@ -255,10 +255,10 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 
 **OOD evaluation (`evaluation/ood_eval.py`):**
 
-- [ ] Assemble OOD test sets: style-transferred faces, face reenactment outputs (e.g. First Order Motion Model), diffusion-based face synthesis (e.g. Stable Diffusion inpainting)
-- [ ] Implement `evaluate_ood(model, ood_dataloader, config) -> dict` — balanced acc, F1, AUC-ROC, confusion matrix per OOD category
-- [ ] Run B+C ensemble on all OOD categories
-- [ ] Run Branch A baseline on same OOD sets for comparison
+- [x] Assemble local forensics OOD test sets under `data/forensics`
+- [x] Implement OOD evaluation path via `evaluation/ood_eval.py` and `scripts/run_forensics_eval.py` — balanced acc, F1, AUC-ROC, confusion matrix per dataset and pooled
+- [x] Run B+C ensemble on all local forensics datasets
+- [x] Run Branch A baseline on the same local forensics datasets
 
 **Inference profiling:**
 
@@ -267,11 +267,11 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 
 **Final eval report:**
 
-- [ ] Consolidated results table — all 7 ensemble configs × in-domain + all OOD categories
-- [ ] Per-branch ablation table
-- [ ] Confusion matrices (in-domain + per OOD category)
+- [x] Consolidated results table — all 7 ensemble configs x in-domain + forensics OOD
+- [x] Per-branch ablation table
+- [x] Confusion matrices (in-domain + per OOD dataset + pooled)
 - [ ] Inference time profile
-- [ ] Deployment recommendation: **B+C ensemble** confirmed as production config with written rationale
+- [x] Deployment recommendation: do not ship B+C or A+B+C from this training run; OOD gate failed
 
 **Done when:** OOD eval complete for all three OOD categories; final report written and committed to `docs/`; inference profile logged to `runs/`.
 
@@ -327,7 +327,7 @@ This reference table describes the proposal target alongside the active reposito
 | **B + C** | **94.4%** | **94.4%** | **0.93** | ⭐ Deploy target |
 | A + B + C | 89.5% | 89.5% | 0.86 | Branch A dilutes OOD robustness |
 
-> Branch A introduces in-distribution bias that degrades OOD performance when added to the B+C ensemble. B+C is the deployment-recommended configuration.
+> Proposal expectation: Branch A introduces in-distribution bias that degrades OOD performance when added to the B+C ensemble, making B+C the deployment target. Current repository result: the completed forensics OOD run does not support deployment of B+C; the gate fails at pooled balanced accuracy `0.4716` and F1 `0.4981`.
 
 ---
 
@@ -348,8 +348,8 @@ This reference table describes the proposal target alongside the active reposito
 
 - **Freeze before you train.** No phase training begins without a passing unit test confirming prior branch weights are frozen.
 - **Cache contract is inviolable.** `{frame_a_stem}_flow.pt`, shape `(2, 64, 64)`, adjacent-index partner rule. Any deviation is an explicit decision requiring cache regeneration.
-- **B+C is the deployment config.** Do not optimize A+B+C metrics at the cost of B+C robustness.
-- **OOD eval is not optional.** Week 4 is not done until OOD numbers exist for all three OOD categories.
+- **B+C is only the proposal deployment config.** Do not ship it unless a real OOD run clears the gate.
+- **OOD eval is not optional.** Week 4 is not done until OOD numbers exist and the result is recorded honestly, pass or fail.
 - **Checkpoints are the handoff artifact.** Each week ends with a saved checkpoint. If the gate is not cleared, the checkpoint is still saved and the miss is noted in the progress snapshot.
 - **One training script per phase.** Do not fold phases into one script; each script is its own audit trail.
 
