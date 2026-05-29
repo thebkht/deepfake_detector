@@ -17,6 +17,13 @@ from data.celeba_loader import (
     create_celeba_dataloader,
     verify_flow_cache,
 )
+from data.forensics_loader import (
+    ForensicsFramePairDataset,
+    create_forensics_dataloader,
+    discover_forensics_datasets,
+    normalize_split,
+    resolve_forensics_root,
+)
 from data.precompute_flow import precompute_flow
 from training.tracker import Tracker
 
@@ -279,3 +286,79 @@ class DataPipelineTestCase(unittest.TestCase):
             tracker.flush()
         event_files = list(run_dir.rglob("events.out.tfevents.*"))
         self.assertTrue(event_files)
+
+
+class ForensicsLoaderTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.top = self.root / "forensics"
+        self.dataset_outer = self.top / "Data Set 1"
+        self.dataset_root = self.dataset_outer / "Data Set 1"
+        for split in ("train", "validation", "test"):
+            for class_name in ("real", "fake"):
+                class_dir = self.dataset_root / split / class_name
+                class_dir.mkdir(parents=True, exist_ok=True)
+                for idx in range(3):
+                    image = Image.new(
+                        "RGB",
+                        (80, 72),
+                        color=(
+                            (idx + 1) * 30,
+                            20 if class_name == "real" else 180,
+                            40 if split == "test" else 120,
+                        ),
+                    )
+                    image.save(class_dir / f"{class_name}_{idx:03d}.jpg")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_resolves_nested_data_set_path(self) -> None:
+        self.assertEqual(resolve_forensics_root(self.dataset_outer), self.dataset_root)
+        self.assertEqual(resolve_forensics_root(self.dataset_root), self.dataset_root)
+        self.assertEqual(discover_forensics_datasets(self.top), [self.dataset_root])
+
+    def test_normalize_validation_split_alias(self) -> None:
+        self.assertEqual(normalize_split("val"), "validation")
+        dataset = ForensicsFramePairDataset(self.dataset_outer, split="val", pairing_mode="degenerate")
+        self.assertEqual(dataset.split, "validation")
+
+    def test_sample_shapes_label_and_finite_flow(self) -> None:
+        dataset = ForensicsFramePairDataset(self.dataset_outer, split="test")
+        sample = dataset[0]
+
+        self.assertEqual(tuple(sample["frame_a"].shape), (3, 64, 64))
+        self.assertEqual(tuple(sample["frame_b"].shape), (3, 64, 64))
+        self.assertEqual(tuple(sample["flow"].shape), (2, 64, 64))
+        self.assertIn(int(sample["label"].item()), {0, 1})
+        self.assertFalse(torch.isnan(sample["flow"]).any())
+        self.assertNotEqual(sample["path_a"], sample["path_b"])
+
+    def test_forensics_dataloader_batches_contract(self) -> None:
+        loader = create_forensics_dataloader(
+            self.dataset_outer,
+            split="validation",
+            pairing_mode="degenerate",
+            batch_size=4,
+            num_workers=0,
+        )
+        batch = next(iter(loader))
+
+        self.assertEqual(tuple(batch["frame_a"].shape), (4, 3, 64, 64))
+        self.assertEqual(tuple(batch["frame_b"].shape), (4, 3, 64, 64))
+        self.assertEqual(tuple(batch["flow"].shape), (4, 2, 64, 64))
+        self.assertEqual(len(batch["path_a"]), 4)
+
+    def test_forensics_limit_preserves_both_classes(self) -> None:
+        dataset = ForensicsFramePairDataset(
+            self.dataset_outer,
+            split="test",
+            pairing_mode="degenerate",
+            limit=4,
+        )
+
+        labels = [int(dataset[index]["label"].item()) for index in range(len(dataset))]
+
+        self.assertEqual(labels.count(0), 2)
+        self.assertEqual(labels.count(1), 2)
