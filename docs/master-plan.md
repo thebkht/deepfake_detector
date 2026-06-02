@@ -1,7 +1,8 @@
 # Hybrid Three-Branch GAN Discriminator — Master Plan
 
 > Deepfake Face Detection · Based on Barrington & Farid, CVPR Workshop 2026  
-> Dataset: CelebA (202,599 images) via Kaggle `jessicali9530/celeba-dataset`
+> Training: CelebA (202,599 images) · `jessicali9530/celeba-dataset`  
+> Val / Test: Real & Fake Images Dataset for Image Forensics · `shivamardeshna/real-and-fake-images-dataset-for-image-forensics`
 >
 > Doc basis: refreshed on 2026-05-29 from the project proposal and current repository state
 
@@ -53,6 +54,8 @@ The proposal is the target design, not the current implementation state.
 - Current ensemble result: B+C RF did not clear the proposal gate, reaching balanced accuracy `0.8869`, F1 `0.8837`, and AUC-ROC `0.9440`; A+B+C RF was strongest on the proxy task at balanced accuracy `0.8992`, F1 `0.8962`, and AUC-ROC `0.9471`
 - Implemented and run on local forensics OOD data: full transfer evaluation under `runs/forensics_eval/` across `20,905` images; B+C RF fails with pooled balanced accuracy `0.4716`, F1 `0.4981`, and AUC-ROC `0.4572`
 - Important delta: the active runtime contract remains `2048 + 32 + 28 = 2108`; proposal-parity `2084-D` fusion is not the current load-compatible path
+
+> ⚠️ **Branch A benchmark caveat:** The recorded Branch A result (1.0 balanced accuracy, 1.0 F1) was produced against Gaussian noise-duplicate fake pairs, not real deepfake images. This is a proxy-task smoke test, not a meaningful deepfake detection score. Branch A must be re-evaluated against the forensics val set before any results are reported to the team lead.
 
 ---
 
@@ -175,8 +178,7 @@ This section keeps the proposal contract and the current code path separate.
 Current status from the repository state:
 
 - **Week 1 is substantially complete.** The local CelebA tree is present at `data/celeba/img_align_celeba` with **202,599 images**, the Week 1 data pipeline and tests exist, and the Branch A baseline has already produced `checkpoints/phase1_branch_a_best.pt`.
-- **Branch A checkpoint is real and measurable.** `runs/branch_a_baseline/benchmark_summary.json` reports best validation metrics of **1.0000 balanced accuracy** and **1.0000 F1** at epoch **34**, which clears the Week 1 gate.
-- **Known checkpoint limitation remains.** The recorded Branch A and Phase 2 runs were produced before the loader switched fake sampling away from noise duplicates, so those metrics are only useful as architecture smoke tests, not meaningful proxy-task scores.
+- **Branch A checkpoint is real and measurable.** `runs/branch_a_baseline/benchmark_summary.json` reports best validation metrics of **1.0000 balanced accuracy** and **1.0000 F1** at epoch **34**, which clears the Week 1 gate — but see the caveat in §1: these metrics are against noise-duplicate fakes and must be re-run against the forensics val set before team-lead handoff.
 - **Farnebäck cache is already complete on this machine.** Verified on **2026-05-18**: `data/flow_cache` contains **202,599** `*_flow.pt` files with **0 missing / 0 extra** stems against `discover_celeba_images`, sample tensors have shape `(2, 64, 64)` and `float32` dtype, the cache occupies about **7.0 GB**, and `tests.test_data.DataPipelineTestCase.test_flow_precompute_smoke` passes.
 - **Week 2 Branch C must preserve the cache contract.** Cached flow filenames are `{frame_a_stem}_flow.pt`, and each tensor is computed against the adjacent-index partner rule used by `data/precompute_flow.py`. The loader now uses cross-identity proxy negatives when identity labels are available, so Branch C must either stay on explicit adjacent-index pairing or use a regenerated cache that matches the new pair selection rule before training.
 - **Week 2 Dev 1 code is now in place.** `models/branch_b.py`, `models/discriminator.py`, `training/phase2_trainer.py`, `training/phase2_train.py`, and `tests/test_model.py` now exist. Branch B's proposal-level 8-D layout and acceleration proxy are locked by a golden regression test, and the current implementation expands that summary to a learned 32-D feature before Phase 2 fusion. Phase 2 also includes a real Branch A freeze test plus Phase 1 encoder load/remap coverage.
@@ -194,59 +196,61 @@ gantt
   title Project Timeline
   dateFormat YYYY-MM-DD
   section Week 1
-    Setup + Branch A (Dev 1)      :done, 2026-05-15, 7d
+    Setup + Branch A (Dev 1)          :done, 2026-05-15, 7d
     Data + Flow + Eval module (Dev 2) :done, 2026-05-15, 7d
   section Week 2
-    Branch B (Dev 1)              :done, 2026-05-22, 7d
-    Flow cache + Branch C (Dev 2) :done, 2026-05-22, 7d
+    Branch B (Dev 1)                  :done, 2026-05-22, 7d
+    Flow cache + Branch C (Dev 2)     :done, 2026-05-22, 7d
   section Week 3
-    Ensemble fine-tune (Dev 1)    :done, 2026-05-29, 3d
-    RF ensemble + ablation (Dev 2):done, 2026-05-29, 4d
+    Ensemble fine-tune (Dev 1)        :done, 2026-05-29, 3d
+    RF ensemble + ablation (Dev 2)    :done, 2026-05-29, 4d
   section Week 4
-    Ensemble experiments (Dev 1)  :2026-06-05, 7d
-    OOD + profiling + report (Dev 2) :2026-06-05, 7d
+    Ensemble experiments (Dev 1)      :2026-06-05, 7d
+    OOD + profiling + report (Dev 2)  :2026-06-05, 7d
 ```
 
 > **Compression rationale:** Setup and Branch A are merged into Week 1 by running data pipeline work (Dev 2) in parallel with scaffold + model work (Dev 1). Branches B and C are built in parallel in Week 2 since they are independent of each other. Eval is tightened to one week by preparing the eval harness during Week 3 alongside training.
 
 ### Week 1 — Setup + Branch A
 
-- [x] Download CelebA from Kaggle (`img_align_celeba.zip`, ~2 GB)
-- [x] Validate dataset: count images, verify resolution (178×218)
+- [x] CelebA already present locally — dataset validation only
 - [x] Write `CelebAFramePairDataset` with identity-based pair sampling
 - [x] Write unit tests for data loader: shape checks, label balance, no NaN
-- [x] **Start** Farnebäck optical flow pre-computation (background job, completes mid-week)
-- [x] Set up experiment tracking (TensorBoard or W&B)
+- [x] Farnebäck optical flow pre-computation complete (202,599 files, ~7 GB)
+- [x] Set up experiment tracking (TensorBoard)
 - [x] Write `config.yaml` with all hyperparameters
 - [x] Implement `BranchA_CNN` + `DiscriminatorPhase1`
-- [x] Train Branch A end-to-end on CelebA proxy real/fake pairs
-- [x] Target: ≥77% balanced accuracy; save `checkpoints/phase1_branch_a.pt`
+- [x] Train Branch A on CelebA proxy real/fake pairs; save `checkpoints/phase1_branch_a_best.pt`
+- [ ] **Re-evaluate Branch A on forensics val set** — required before team-lead handoff (proxy 1.0 score is not a valid deepfake benchmark)
+- [x] **Download forensics dataset** (`shivamardeshna/real-and-fake-images-dataset-for-image-forensics`)
+- [ ] **Implement `ForensicsDataset` loader** — resize 256→64, balanced 50/50 real/fake, val/test split
 
 ### Week 2 — Branches B & C (parallel)
 
 - [x] **Dev 1:** Implement `BranchB_Spatiotemporal` + `DiscriminatorPhase2` (Branch A frozen); smoke-verify load/freeze/tests and Phase 2 training path
-- [x] **Dev 1:** Run the full Phase 2 training job; target ≥88% accuracy; save `checkpoints/phase2_a_b.pt`
-- [x] **Dev 2:** Run the full Branch C / Phase 3 training job with A+B frozen; target ≥83% accuracy; save `checkpoints/phase3_a_b_c.pt`
+- [x] **Dev 1:** Run full Phase 2 training; target ≥88% accuracy; save `checkpoints/phase2_a_b.pt`
 - [x] **Dev 2:** Finalize flow cache `.pt` files; implement `BranchC_Physics`; implement Hinge loss
+- [x] **Dev 2:** Run full Branch C / Phase 3 training with A+B frozen; target ≥83% accuracy; save `checkpoints/phase3_a_b_c.pt`
 - [x] **Dev 2:** Build balanced accuracy / F1 / AUC-ROC eval module; checkpoint save/resume
+- [ ] **Dev 2:** Pre-compute Farnebäck flow for forensics images → `data/forensics_flow_cache/`
 
 ### Week 3 — Full Ensemble Fine-tune
 
-- [x] Dev 1: Unfreeze all branches, fine-tune end-to-end with lower LR (5e-5)
-- [x] Dev 1: Characterize Phase 4 result; Phase 3 remains the current deployment candidate because Phase 4 lowered F1 and TNR
-- [x] Dev 1/Dev 2: Implement independent logistic/RF classifiers for the canonical branch combinations (B+C recommended)
-- [x] Dev 1/Dev 2: Run all 7 ensemble combination experiments and write the resulting summary
-- [ ] Target: **B+C ensemble ≥ 94.4% balanced accuracy, F1 ≥ 0.93** — not cleared on the proxy or forensics OOD split
-- [x] Save `checkpoints/phase4_ensemble.pt` from an executed Phase 4 run
+- [x] Dev 1: 30-epoch staged ensemble fine-tune with asymmetric BCE+hinge loss; save `phase4_ensemble.pt`
+- [x] Dev 1: Characterize Phase 4 result; Phase 3 remains preferred balanced checkpoint
+- [x] Dev 1/Dev 2: Run all 7 ensemble combination experiments; write summary
+- [ ] Target: **B+C ensemble ≥ 94.4% balanced accuracy, F1 ≥ 0.93** — not cleared on proxy or forensics split
 - [x] Dev 2: Implement confusion-matrix output and per-branch probe/ablation reporting
+- [ ] **Dev 1/Dev 2: Re-run ensemble experiments using forensics val set** as the canonical eval split
 
 ### Week 4 — Eval & Hardening
 
-- [x] Evaluate on local forensics out-of-distribution test sets
-- [x] Run threshold sweep on Phase 3 checkpoint to select the best proxy-task TNR/TPR operating point
+- [x] Evaluate on local forensics OOD test set — negative transfer result recorded
+- [x] Run threshold sweep on Phase 3 checkpoint
 - [x] Run proxy-task ablation/probe pass: each branch independently, all pairs, full triple
+- [ ] **Run final evaluation on forensics test set** (held-out 50% of forensics dataset) — canonical benchmark for team-lead report
 - [ ] Profile inference time; optimize Branch C flow pre-computation
-- [x] Write final eval report
+- [x] Write final eval report (`docs/final-report.md`)
 
 ---
 
@@ -258,37 +262,37 @@ Two developers, four weeks, split by model vs. data/eval ownership.
 
 ### Roles
 
-| Developer | Role                       | Primary Ownership                                                                            |
-| --------- | -------------------------- | -------------------------------------------------------------------------------------------- |
-| Dev 1     | Model & training           | `models/`, `training/` — all three branches, training scripts, ensemble fine-tune            |
-| Dev 2     | Data, physics & evaluation | `data/`, `evaluation/` — CelebA loader, flow cache, Branch C training, OOD eval, all reports |
+| Developer | Role                       | Primary Ownership                                                                             |
+| --------- | -------------------------- | --------------------------------------------------------------------------------------------- |
+| Dev 1     | Model & training           | `models/`, `training/` — all three branches, training scripts, ensemble fine-tune             |
+| Dev 2     | Data, physics & evaluation | `data/`, `evaluation/` — CelebA loader, forensics loader, flow cache, Branch C, eval, reports |
 
 ### Per-Developer Task Breakdown
 
 **Dev 1 — Model & training**
 
-| Week | Tasks                                                                                                                                                                                                                    |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1    | Project scaffold, `config.yaml`, requirements, experiment tracking setup; `BranchA_CNN` + `DiscriminatorPhase1`; core training loop (`trainer.py`), BCE loss; unit tests; train Branch A; save `phase1_branch_a_best.pt` |
-| 2    | `BranchB_Spatiotemporal` + `DiscriminatorPhase2` (Branch A frozen); Phase 2 training script; full-gate Branch B training complete; `phase2_a_b.pt` ready for Dev 2 consumption                                           |
-| 3    | 30-epoch staged ensemble fine-tune with asymmetric BCE+hinge loss tuning; save and characterize `phase4_ensemble.pt`; keep Phase 3 as the balanced checkpoint baseline                                                     |
-| 4    | All 7 ensemble combination experiments; Phase 3 threshold sweep; architecture review; support OOD eval                                                                                                                   |
+| Week | Tasks                                                                                                                                                                                                                                                     |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Project scaffold, `config.yaml`, requirements, experiment tracking setup; `BranchA_CNN` + `DiscriminatorPhase1`; core training loop, BCE loss; unit tests; train Branch A on CelebA; **re-evaluate on forensics val set**; save `phase1_branch_a_best.pt` |
+| 2    | `BranchB_Spatiotemporal` + `DiscriminatorPhase2` (Branch A frozen); Phase 2 training script; full-gate Branch B training; evaluate on forensics val; `phase2_a_b.pt` ready for Dev 2                                                                      |
+| 3    | 30-epoch staged ensemble fine-tune with asymmetric BCE+hinge loss; save and characterize `phase4_ensemble.pt`; keep Phase 3 as the balanced checkpoint baseline; re-run ensemble experiments on forensics val                                             |
+| 4    | All 7 ensemble combination experiments on forensics test set; Phase 3 threshold sweep; architecture review; support final report                                                                                                                          |
 
 **Dev 2 — Data, physics & evaluation**
 
-| Week | Tasks                                                                                                                                                                                                                             |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | CelebA validation (data already present locally); `CelebAFramePairDataset` + augmentation pipeline + data loader unit tests; **launch** Farnebäck flow pre-computation (background); balanced accuracy / F1 / AUC-ROC eval module |
-| 2    | Finalize flow cache `.pt` files; `BranchC_Physics`; Phase 3 training script (A+B frozen); train Branch C; save `phase3_a_b_c.pt`; Hinge loss implementation                                                                       |
-| 3    | Random forest ensemble (B+C, A+B, A+C, A+B+C); confusion matrix + per-branch ablation module; checkpoint save/resume                                                                                                              |
-| 4    | OOD eval sets (style transfer, diffusion faces); inference profiling; flow pre-compute optimization; final eval report                                                                                                            |
+| Week | Tasks                                                                                                                                                                                                                                                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | CelebA validation (data already present); `CelebAFramePairDataset` + augmentation pipeline + data loader unit tests; CelebA flow cache verified (202,599 files); **download forensics dataset**; implement `ForensicsDataset` loader (resize 256→64, 50/50 balanced, val/test split); balanced accuracy / F1 / AUC-ROC eval module |
+| 2    | `BranchC_Physics`; Phase 3 training script (A+B frozen); train Branch C on CelebA; evaluate on forensics val; save `phase3_a_b_c.pt`; Hinge loss; **launch forensics flow cache pre-computation** → `data/forensics_flow_cache/`                                                                                                   |
+| 3    | Random forest ensemble (B+C, A+B, A+C, A+B+C); confusion matrix + per-branch ablation module; checkpoint save/resume; re-run ensemble on forensics val                                                                                                                                                                             |
+| 4    | **Final test-set evaluation on forensics dataset** (canonical team-lead benchmark); inference profiling; final eval report                                                                                                                                                                                                         |
 
 ### 4-Week Timeline
 
-| Team  | Week 1                      | Week 2                | Week 3                 | Week 4                   |
-| ----- | --------------------------- | --------------------- | ---------------------- | ------------------------ |
-| Dev 1 | Scaffold + Branch A + Train | Branch B              | Ensemble fine-tune     | Ensemble experiments     |
-| Dev 2 | Data + flow + eval module   | Flow cache + Branch C | RF ensemble + ablation | OOD + profiling + report |
+| Team  | Week 1                              | Week 2                    | Week 3                 | Week 4                                |
+| ----- | ----------------------------------- | ------------------------- | ---------------------- | ------------------------------------- |
+| Dev 1 | Scaffold + Branch A + ForensicsEval | Branch B + forensics val  | Ensemble fine-tune     | Ensemble experiments + forensics test |
+| Dev 2 | Data + ForensicsLoader + eval mod   | Branch C + forensics flow | RF ensemble + ablation | Forensics test + report               |
 
 ### Critical Sync Points
 
@@ -297,17 +301,17 @@ sequenceDiagram
   participant D1 as Dev 1
   participant D2 as Dev 2
   Note over D1,D2: Mid Week 1
-  D2->>D1: data loader ready
+  D2->>D1: CelebA + ForensicsDataset loaders ready
   D2->>D1: eval module interface stable
   Note over D1,D2: End of Week 1
-  D1->>D2: phase1_branch_a_best.pt
+  D1->>D2: phase1_branch_a_best.pt + forensics val benchmark
   Note over D1,D2: End of Week 2
-  D1->>D2: phase2_a_b.pt
-  D2->>D1: phase3_a_b_c.pt
+  D1->>D2: phase2_a_b.pt + forensics val score
+  D2->>D1: phase3_a_b_c.pt + forensics flow cache ready
   Note over D1,D2: End of Week 3
-  D1->>D2: phase4_ensemble.pt plus Phase 3 baseline recommendation
+  D1->>D2: phase4_ensemble.pt + Phase 3 baseline recommendation
   Note over D1,D2: End of Week 4
-  D2->>D1: OOD eval results + final report
+  D2->>D1: forensics test-set results + final report
 ```
 
 ---
@@ -322,12 +326,13 @@ deepfake_detector/
 │
 ├── data/
 │   ├── celeba_loader.py             # CelebAFramePairDataset + DataLoader factory
+│   ├── forensics_loader.py          # ForensicsDataset (val/test only, 256→64 resize)
 │   ├── precompute_flow.py           # Farnebäck flow pre-computation script
 │   └── augmentations.py             # Shared transforms
 │
 ├── models/
 │   ├── discriminator.py             # HybridDiscriminator + all branches
-│   ├── branch_a.py                  # BranchA_CNN (can be split out)
+│   ├── branch_a.py                  # BranchA_CNN
 │   ├── branch_b.py                  # BranchB_Spatiotemporal
 │   └── branch_c.py                  # BranchC_Physics
 │
@@ -342,7 +347,7 @@ deepfake_detector/
 ├── evaluation/
 │   ├── eval.py                      # Balanced accuracy, F1, confusion matrix
 │   ├── ensemble.py                  # 7-combo logistic/RF ensemble probes
-│   ├── inference_handoff.py         # Phase 4 -> Week 4 inference contract artifact
+│   ├── inference_handoff.py         # Phase 4 → Week 4 inference contract artifact
 │   └── threshold_sweep.py           # Phase 3 threshold operating-point sweep
 │
 ├── checkpoints/                     # Saved model weights (gitignored)
@@ -350,7 +355,8 @@ deepfake_detector/
 ├── runs/                            # TensorBoard logs (gitignored)
 │
 ├── scripts/
-│   ├── download_celeba.sh           # Kaggle API download helper
+│   ├── download_celeba.sh           # Kaggle API download helper — training data
+│   ├── download_forensics.sh        # Kaggle API download helper — val/test data
 │   ├── eval_pred_all_branches.py    # Prediction CSV/confusion export for checkpoints
 │   └── run_ensemble_ablation.py     # 7-combo ensemble + threshold sweep runner
 │
@@ -366,7 +372,18 @@ deepfake_detector/
 
 ## 6. Data Pipeline
 
-### Dataset Facts (CelebA)
+### Dataset Strategy (Team Lead Directive)
+
+| Role                  | Dataset                                | Source                                                                    |
+| --------------------- | -------------------------------------- | ------------------------------------------------------------------------- |
+| **Training only**     | CelebA                                 | `kaggle: jessicali9530/celeba-dataset`                                    |
+| **Validation & Test** | Real & Fake Images for Image Forensics | `kaggle: shivamardeshna/real-and-fake-images-dataset-for-image-forensics` |
+
+The forensics dataset contains genuine real/fake image pairs (not noise duplicates), making it a meaningful out-of-distribution benchmark. CelebA provides the volume needed for training all three branches. The two datasets must **never be mixed during training** — forensics data is strictly held out for val/test.
+
+> ⚠️ **Benchmark validity:** Because the forensics dataset contains actual AI-generated and manipulated faces, val/test metrics on it are a genuine measure of deepfake detection ability. The Branch A and Phase 2 proxy scores (1.0 balanced accuracy) were produced against Gaussian noise duplicates and are not valid deepfake benchmarks. All phase benchmarks reported to the team lead must use forensics val scores.
+
+### Training Dataset — CelebA
 
 | Property          | Value                        |
 | ----------------- | ---------------------------- |
@@ -376,16 +393,9 @@ deepfake_detector/
 | Target resolution | 64×64                        |
 | Attributes        | 40 binary labels per image   |
 | License           | Non-commercial research only |
+| Role              | Training only (Phases 1–4)   |
 
-### Split
-
-| Split | Image Range       | Count   |
-| ----- | ----------------- | ------- |
-| Train | 1 – 162,770       | 162,770 |
-| Val   | 162,771 – 182,637 | 19,867  |
-| Test  | 182,638 – 202,599 | 19,962  |
-
-### Frame Pair Sampling Strategy
+#### CelebA Frame Pair Sampling
 
 ```
 Real pair:   two images of the same celebrity identity
@@ -396,26 +406,81 @@ Legacy proxy: single image + small Gaussian noise duplicate
 
 Current proxy: anchor image + different-identity image when labels exist
                fallback to distant-index pairing without identity labels
-               pseudo-identity file may be derived from stable CelebA attributes if true identities are unavailable
                → replace with GAN/diffusion outputs during full deepfake training
 ```
 
-### Augmentations (train only)
+#### CelebA Split (used only for training; not used for val/test reporting)
 
-- Random horizontal flip
-- ColorJitter (brightness ±0.1, contrast ±0.1, saturation ±0.05)
-- Normalize to [-1, 1]
+| Split | Image Range       | Count   |
+| ----- | ----------------- | ------- |
+| Train | 1 – 162,770       | 162,770 |
+| Val   | 162,771 – 182,637 | 19,867  |
+| Test  | 182,638 – 202,599 | 19,962  |
+
+### Validation & Test Dataset — Real & Fake Images for Image Forensics
+
+| Property          | Value                                                                     |
+| ----------------- | ------------------------------------------------------------------------- |
+| Source            | `kaggle: shivamardeshna/real-and-fake-images-dataset-for-image-forensics` |
+| Content           | Mixed real photographs + AI-generated/manipulated fake images             |
+| Native resolution | 256×256                                                                   |
+| Target resolution | 64×64 (resize to match model input)                                       |
+| Role              | Validation and test only — **never used for training**                    |
+
+#### Forensics Dataset Split
+
+Shuffle and split the forensics dataset at balanced 50/50 real/fake ratio as specified by team lead:
+
+| Split | Fraction              | Purpose                                                            |
+| ----- | --------------------- | ------------------------------------------------------------------ |
+| Val   | 50% of forensics data | Hyperparameter selection, checkpoint ranking, per-phase benchmarks |
+| Test  | 50% of forensics data | Final benchmark reported to team lead — held out until Week 4      |
+
+#### Forensics Frame Pair Strategy
+
+Since the forensics dataset contains single images (not video frames):
+
+```
+Real pair:   two different real images from the forensics real subset
+Fake pair:   two different fake images from the forensics fake subset
+```
+
+### Augmentations
+
+| Split              | Augmentations                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| CelebA train       | Random horizontal flip, ColorJitter (brightness ±0.1, contrast ±0.1, saturation ±0.05), normalize to [-1, 1] |
+| Forensics val/test | Resize to 64×64, normalize to [-1, 1] — **no augmentation**                                                  |
 
 ### Optical Flow Pre-computation
 
 ```bash
+# CelebA flow cache (training) — already complete on local workspace
 python data/precompute_flow.py \
-  --img-dir /data/celeba/img_align_celeba \
-  --out-dir /data/celeba/flow_cache \
+  --img-dir data/celeba/img_align_celeba \
+  --out-dir data/flow_cache \
+  --method farneback
+
+# Forensics flow cache (val/test) — run before Branch C eval
+python data/precompute_flow.py \
+  --img-dir data/forensics/images \
+  --out-dir data/forensics_flow_cache \
   --method farneback
 ```
 
 Cached as `{image_stem}_flow.pt` → shape `(2, 64, 64)` (dx, dy channels).
+
+### Download Scripts
+
+```bash
+# Training data
+kaggle datasets download -d jessicali9530/celeba-dataset
+unzip celeba-dataset.zip -d data/celeba
+
+# Val/test data
+kaggle datasets download -d shivamardeshna/real-and-fake-images-dataset-for-image-forensics
+unzip real-and-fake-images-dataset-for-image-forensics.zip -d data/forensics
+```
 
 ---
 
@@ -427,17 +492,17 @@ Training all branches simultaneously from scratch leads to unstable gradients an
 
 ### Hyperparameters
 
-| Parameter              | Value                   |
-| ---------------------- | ----------------------- |
-| Image size             | 64×64                   |
-| Batch size             | 64                      |
-| Optimizer              | Adam (β₁=0.5, β₂=0.999) |
-| LR (phases 1–3)        | 2e-4                    |
-| LR (phase 4 fine-tune) | 5e-5                    |
-| Epochs                 | 20 for phases 1-3; 30 for Phase 4 staged fine-tuning |
-| Scheduler              | CosineAnnealingLR       |
-| Dropout (fusion head)  | 0.3                     |
-| Fake ratio             | 0.5 (balanced)          |
+| Parameter              | Value                                                |
+| ---------------------- | ---------------------------------------------------- |
+| Image size             | 64×64                                                |
+| Batch size             | 64                                                   |
+| Optimizer              | Adam (β₁=0.5, β₂=0.999)                              |
+| LR (phases 1–3)        | 2e-4                                                 |
+| LR (phase 4 fine-tune) | 5e-5                                                 |
+| Epochs                 | 20 for phases 1–3; 30 for Phase 4 staged fine-tuning |
+| Scheduler              | CosineAnnealingLR                                    |
+| Dropout (fusion head)  | 0.3                                                  |
+| Fake ratio             | 0.5 (balanced)                                       |
 
 ### Phase Summary
 
@@ -447,6 +512,8 @@ Training all branches simultaneously from scratch leads to unstable gradients an
 | 2     | Branch B + A+B fusion head         | Branch A encoder | Acc ≥ 88%, F1 ≥ 0.88 |
 | 3     | Branch C + A+B+C fusion head       | Branch A, B      | Acc ≥ 83%, F1 ≥ 0.80 |
 | 4     | Full fused model or ensemble stack | —                | Acc ≥ 94%, F1 ≥ 0.93 |
+
+> All phase targets are evaluated against the **forensics val set**, not the CelebA proxy split.
 
 ---
 
@@ -491,6 +558,12 @@ Final Phase 4 evaluation shows this loss did not fix the real/fake operating-poi
 | AUC-ROC           | Area under ROC curve                             |
 | Confusion Matrix  | Per-class breakdown: authentic vs. synthetic     |
 
+### Evaluation Dataset
+
+Val and test evaluation uses the **Real & Fake Images Dataset for Image Forensics** (`shivamardeshna/real-and-fake-images-dataset-for-image-forensics`). This contains genuine AI-generated and manipulated fake images — not noise duplicates — making it a valid deepfake detection benchmark.
+
+The forensics dataset is split 50/50 val/test, with real and fake images mixed at balanced ratio as specified by the team lead. The test set is held out until Week 4 final evaluation.
+
 ### Ensemble Strategy
 
 For the B+C ensemble (recommended per proposal):
@@ -500,21 +573,13 @@ For the B+C ensemble (recommended per proposal):
 3. Fit a **Random Forest classifier** on [B_logit, C_logit] → real/fake
 4. Optionally stack with Branch A logit for the full A+B+C ensemble
 
-The current repository implements this evaluation layer as feature probes over the active Phase 3/4 branch outputs:
+The current repository implements this as feature probes over the active Phase 3/4 branch outputs:
 
 - `evaluation/ensemble.py` extracts A `2048-D`, B `32-D`, C `28-D`, and full-model logit features.
 - Single-branch A/B/C configs use logistic regression.
 - A+B, A+C, B+C, and A+B+C configs use `RandomForestClassifier(n_estimators=100, random_state=42)`.
 - `scripts/run_ensemble_ablation.py` balances extracted examples by class, uses an 80/20 probe split, writes normalized and raw confusion matrices for all seven configs, and runs the Phase 3 threshold sweep in the same output directory.
 - The completed proxy-task run in `runs/ensemble_ablation/` did not clear the B+C proposal gate, and the completed forensics OOD run in `runs/forensics_eval/` also fails the gate. No deployment claim is supported by the current artifacts.
-
-### Out-of-Domain Test Sets
-
-To validate OOD robustness, evaluate on:
-
-- Style-transferred faces (neural style transfer)
-- Face reenactment (e.g. First Order Motion Model outputs)
-- Diffusion-based face synthesis (e.g. Stable Diffusion inpainting)
 
 ---
 
@@ -527,25 +592,24 @@ To validate OOD robustness, evaluate on:
 | Branch C only (physics dynamics) | 83.3%       | 83.3%       | 0.80     |                      |
 | A + B ensemble                   | 89.5%       | 89.5%       | 0.88     |                      |
 | A + C ensemble                   | 88.9%       | 88.9%       | 0.85     |                      |
-| **B + C ensemble**               | **94.4%**   | **94.4%**   | **0.93** | ⭐ Recommended       |
+| **B + C ensemble**               | **94.4%**   | **94.4%**   | **0.93** | ⭐ Proposal target   |
 | A + B + C full ensemble          | 89.5%       | 89.5%       | 0.86     | Note: lower than B+C |
 
-> **Insight from the proposal:** the full A+B+C ensemble underperforms B+C because Branch A introduces in-distribution bias that dilutes the OOD robustness of the physics+temporal signal. The current proxy-task run did not reproduce that pattern: A+B+C RF outperformed B+C RF on balanced accuracy, while B+C remained below the proposal gate. The completed forensics OOD run also fails the proposal claim: B+C RF reaches only `0.4716` pooled balanced accuracy and `0.4981` F1.
-
-> **Current repo result:** the neural Phase 4 A+B+C fine-tune did not improve the balanced deployment objective enough to replace Phase 3, and the proxy-task plus forensics B+C RF evaluations both fail the proposal gate. The final report treats this as a negative transfer result, not a deployment-ready detector.
+> **Current repo result:** B+C RF reached `0.8869` balanced accuracy on the proxy split and `0.4716` on the forensics OOD split — both below the proposal gate. A+B+C RF was the strongest proxy-task probe at `0.8992` balanced accuracy. The final report treats this as a negative transfer result. All targets above are the proposal's stated goals; the forensics test-set evaluation in Week 4 is the canonical measurement against these targets.
 
 ---
 
 ## 11. Risks & Mitigations
 
-| Risk                                                          | Likelihood | Impact | Mitigation                                      |
-| ------------------------------------------------------------- | ---------- | ------ | ----------------------------------------------- |
-| Branch A dominates training, suppresses B/C signal            | High       | High   | Phased freeze strategy; gradient scaling        |
-| Optical flow pre-computation bottleneck (~2h for full CelebA) | Medium     | Medium | One-time offline cache; skip during prototyping |
-| Identity file missing (no pair sampling)                      | Low        | Medium | Fallback to adjacent-index pairs                |
-| Real/fake class imbalance during GAN training                 | Medium     | Medium | Balanced sampler; monitor per-class accuracy    |
-| Overfitting on CelebA distribution                            | Medium     | High   | OOD eval set mandatory before Phase 4 sign-off  |
-| CelebA license: non-commercial only                           | —          | —      | Confirm project usage is research-only          |
+| Risk                                                          | Likelihood | Impact | Mitigation                                                              |
+| ------------------------------------------------------------- | ---------- | ------ | ----------------------------------------------------------------------- |
+| Branch A dominates training, suppresses B/C signal            | High       | High   | Phased freeze strategy; gradient scaling                                |
+| Optical flow pre-computation bottleneck (~2h for full CelebA) | Medium     | Medium | One-time offline cache; skip during prototyping                         |
+| Identity file missing (no pair sampling)                      | Low        | Medium | Fallback to adjacent-index pairs                                        |
+| Real/fake class imbalance during GAN training                 | Medium     | Medium | Balanced sampler; monitor per-class accuracy                            |
+| Overfitting on CelebA distribution                            | Medium     | High   | Forensics val/test set is the canonical OOD benchmark                   |
+| Forensics flow cache pairing mismatch with identity loader    | Medium     | High   | Branch C must use consistent adjacent-index pairing or regenerate cache |
+| CelebA license: non-commercial only                           | —          | —      | Confirm project usage is research-only                                  |
 
 ---
 
@@ -567,14 +631,6 @@ Install:
 
 ```bash
 pip install -r requirements.txt
-```
-
-Download CelebA:
-
-```bash
-# Requires Kaggle API credentials (~/.kaggle/kaggle.json)
-kaggle datasets download -d jessicali9530/celeba-dataset
-unzip celeba-dataset.zip -d /data/celeba
 ```
 
 ---
