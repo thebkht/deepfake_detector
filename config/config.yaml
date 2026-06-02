@@ -36,14 +36,14 @@ forensics:
   threshold_dir: runs/forensics_threshold
 
 training:
-  epochs: 100
+  epochs: 30
   learning_rate: 0.0002
   optimizer: adam
   betas:
     - 0.5
     - 0.999
   scheduler: CosineAnnealingLR
-  scheduler_t_max: 100
+  scheduler_t_max: 30
   dropout: 0.3
   checkpoint_metric: balanced_accuracy
   seed: 42
@@ -56,7 +56,7 @@ training:
     enable_loss_ceiling: true
 
 phase2:
-  epochs: 20
+  epochs: 30
   learning_rate: 0.00015
   backbone_train_last_n: 2
   backbone_lr_scale: 0.1
@@ -65,7 +65,7 @@ phase2:
     - 0.5
     - 0.999
   scheduler: CosineAnnealingLR
-  scheduler_t_max: 15
+  scheduler_t_max: 30
   dropout: 0.4
   weight_decay: 0.0001
   checkpoint_metric: balanced_accuracy
@@ -85,7 +85,7 @@ phase2:
     enable_loss_ceiling: true
 
 phase3:
-  epochs: 20
+  epochs: 30
   device: mps
   learning_rate: 0.0002
   optimizer: adam
@@ -93,7 +93,7 @@ phase3:
     - 0.5
     - 0.999
   scheduler: CosineAnnealingLR
-  scheduler_t_max: 20
+  scheduler_t_max: 30
   dropout: 0.3
   seed: 42
   checkpoint_name: phase3_a_b_c.pt
