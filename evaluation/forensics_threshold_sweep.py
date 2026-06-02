@@ -138,7 +138,17 @@ def _branch_b_histogram_summary(features_b: np.ndarray, labels: np.ndarray) -> d
 def _histogram(values: np.ndarray) -> dict[str, Any]:
     if values.size == 0:
         return {"bins": [], "counts": []}
-    counts, edges = np.histogram(values, bins=20)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return {"bins": [], "counts": []}
+    value_min = float(values.min())
+    value_max = float(values.max())
+    if float(np.ptp(values)) <= np.finfo(values.dtype).eps:
+        return {"bins": [value_min, value_max], "counts": [int(values.size)]}
+    try:
+        counts, edges = np.histogram(values, bins=20)
+    except ValueError:
+        return {"bins": [value_min, value_max], "counts": [int(values.size)]}
     return {"bins": [float(edge) for edge in edges], "counts": [int(count) for count in counts]}
 
 
