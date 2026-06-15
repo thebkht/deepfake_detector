@@ -1,7 +1,7 @@
 # Hybrid Three-Branch GAN Discriminator — Build Plan
 
-> Last updated: 2026-05-29  
-> Status: **Week 1 and Week 2 are gate-cleared.** The repository now includes a trained `phase3_a_b_c.pt` checkpoint plus matching run artifacts. **Week 3 Phase 4 has been executed and is not the deployment candidate**: it marginally improves balanced accuracy/AUC but worsens F1 and real-class TNR. The Week 3 RF ensemble, neural ablation, and threshold-sweep job has now run on the balanced proxy test subset. B+C RF did not clear the proposal gate. Week 4 forensics OOD evaluation is complete across all four local datasets (`20,905` images), and the OOD gate fails: B+C RF reaches only `0.4716` pooled balanced accuracy and `0.4981` F1.
+> Last updated: 2026-06-03  
+> Status: **CelebA proxy training is complete, but the forensics gate is not cleared.** The repository includes trained Phase 1-4 checkpoints, local forensics data, aligned validation/test cache, forensics validation threshold calibration, forensics validation ensemble artifacts, a locked forensics test artifact, and CPU inference profiling. The canonical locked test run in `runs/forensics_eval_final/` uses aligned faces, degenerate pairing, per-dataset validation thresholds, and Branch B inversion. B+C RF reaches only `0.5000` pooled balanced accuracy and `0.6683` F1 on the locked test set, far below the 0.944 / 0.93 proposal gate.
 
 > **2 Engineers · 4 Weeks · OOD Robustness Target: 94.4% balanced accuracy**
 
@@ -24,8 +24,8 @@
 
 | Phase | Where the repo is now                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Next gate                                                                                                                       |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | CelebA at `data/celeba/img_align_celeba` (202,599 images); Branch A encoder and baseline classifier implemented; flow cache complete at `data/flow_cache` (202,599 `*_flow.pt` files, ~7.0 GB, shape `(2, 64, 64)` float32); `test_flow_precompute_smoke` passing; loader supports same-identity real pairs, cross-identity proxy fakes, singleton-adjacent fallback, and attribute-derived pseudo-identities when true identity labels are unavailable. **Pending:** forensics dataset download, `ForensicsDataset` loader, and re-evaluation of Branch A against forensics val set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Download forensics dataset; implement `ForensicsDataset` loader; re-run Branch A eval on forensics val before team-lead handoff |
-| 2     | Branch B (`models/branch_b.py`) and the full Phase 2 A+B stack are implemented; Run 3 now shares Branch A's encoder, uses the committed 8-D summary `[vel_mean, vel_std, vel_max, vel_min, cos_sim, l2_dist, sign_consistency, abs_vel_mean]`, expands it to 32-D before fusion, and partially unfreezes the shared encoder tail. Branch C (`models/branch_c.py`), `DiscriminatorPhase3`, hinge loss, flow-aware `adjacent_cache` loading, checkpoint resume helpers, and Phase 3 CLI/trainer wiring are implemented and trained. `checkpoints/phase3_a_b_c.pt` matches `runs/phase3_a_b_c_w2/benchmark_summary.json`, with the best validation result at epoch `8`: balanced accuracy `0.8741`, F1 `0.9067`, AUC-ROC `0.9484`, loss `0.2726`. Phase 3/4 comparison eval keeps adjacent-cache flow valid and balances evaluation rows by class. Final Phase 4 results are balanced accuracy `0.8850`, F1 `0.8955`, AUC-ROC `0.9499`, TNR `0.72`, and TPR `0.97`, so Phase 3 remains the better deployment candidate under the balanced objective. The Week 3 ensemble run in `runs/ensemble_ablation/` evaluated `13,074` balanced test examples: B+C RF reached balanced accuracy `0.8869`, F1 `0.8837`, AUC-ROC `0.9440`; A+B+C RF was strongest at balanced accuracy `0.8992`, F1 `0.8962`, AUC-ROC `0.9471`; threshold `0.61` gave the best Phase 3 balanced accuracy `0.8850`. Week 4 forensics OOD evaluation in `runs/forensics_eval/` evaluated `20,905` images. The transfer ensembles collapse on forensics: B+C RF reaches pooled balanced accuracy `0.4716`, F1 `0.4981`, and AUC-ROC `0.4572`; the final report is `docs/final-report.md`. **Pending:** forensics val scores for Phases 2 and 3; forensics flow cache. | Re-run Phase 2 and Phase 3 gate checks against forensics val split; launch forensics flow pre-computation                       |
+| 1     | CelebA flow cache complete at `data/flow_cache` (202,599 `*_flow.pt` files). Local forensics data is staged under `data/forensics`, and `data/forensics_loader.py` resolves the nested `Data Set N/Data Set N` layout with balanced real/fake loading. MTCNN aligned cache exists for validation/test at `data/forensics_aligned`; validation detection is above 95% for all datasets, but Data Set 1 test detection is `91.85%`, below the 95% target. **Pending:** Branch A forensics-val diagnostic remains documented-only, not a canonical GAN single-image score. | Keep Branch A caveated as a pair diagnostic; do not use it as the deployment metric |
+| 2     | Phase 2/3/4 checkpoints exist. Forensics validation threshold calibration is logged in `runs/forensics_threshold/summary.json`: pooled neural best balanced accuracy `0.5178` at threshold `0.06`. Forensics validation ensemble is logged in `runs/ensemble_ablation_forensics_val/summary.json`: B+C RF pooled balanced accuracy `0.5000`, F1 `0.0000`, AUC-ROC `0.5505`; A+B+C RF is strongest but still only `0.5066` balanced accuracy. Locked test is logged in `runs/forensics_eval_final/summary.json`: B+C RF pooled balanced accuracy `0.5000`, F1 `0.6683`, AUC-ROC `0.5121`. CPU inference profile exists at `runs/inference_profile/summary.json`. **Pending:** full in-domain RF benchmark and any neural forensics fine-tuning approval. | Run full in-domain RF only after generating aligned train cache or intentionally using raw train/test; neural fine-tune requires team-lead approval |
 
 Update this table when a gate flips so the plan stays honest for the next work session.
 
@@ -76,11 +76,11 @@ Update this table when a gate flips so the plan stays honest for the next work s
 
 ---
 
-## Week 1 — Setup + Branch A `[COMPLETE — forensics re-eval pending]`
+## Week 1 — Setup + Branch A `[COMPLETE — Branch A diagnostic caveat remains]`
 
 ### Dev 1 — Model & Training
 
-**Goal:** Branch A trains end-to-end. Checkpoint saved and gate-cleared. **Branch A must be re-evaluated against forensics val before team-lead handoff.**
+**Goal:** Branch A trains end-to-end. Checkpoint saved and gate-cleared. Branch A can be re-run on forensics only as a pair-labelled diagnostic, not as a canonical GAN single-image benchmark.
 
 - [x] Project scaffold, `config.yaml`, `requirements.txt`
 - [x] Experiment tracking setup (TensorBoard or W&B)
@@ -90,7 +90,7 @@ Update this table when a gate flips so the plan stays honest for the next work s
 - [x] Unit tests: forward-pass output shape `(B, 1)`, no NaN activations
 - [x] Train Branch A on CelebA — proxy val balanced acc `1.0000`, F1 `1.0000` @ epoch `34` (noise-duplicate fakes; not a valid deepfake benchmark)
 - [x] Save `checkpoints/phase1_branch_a_best.pt` + `runs/branch_a_baseline/benchmark_summary.json`
-- [ ] **Re-evaluate Branch A on forensics val set** — required before team-lead handoff; update `benchmark_summary.json` with forensics val scores
+- [ ] **Re-evaluate Branch A on forensics val set** — pair-labelled diagnostic only; do not use as the deployment metric
 
 ### Dev 2 — Data & Eval
 
@@ -104,18 +104,18 @@ Update this table when a gate flips so the plan stays honest for the next work s
 - [x] Flow cache verified: 202,599 files, 0 missing, 0 extra, shape `(2, 64, 64)` float32, ~7.0 GB
 - [x] `tests.test_data.DataPipelineTestCase.test_flow_precompute_smoke` passing
 - [x] Eval module skeleton (`evaluation/eval.py`) — `compute_balanced_accuracy`, `compute_f1`, `compute_auc_roc` stubs defined
-- [ ] **Download forensics dataset** (`kaggle datasets download -d shivamardeshna/real-and-fake-images-dataset-for-image-forensics`)
-- [ ] **Implement `ForensicsDataset` loader** (`data/forensics_loader.py`) — resize 256→64, balanced 50/50 real/fake mix, 50/50 val/test split, no augmentation
-- [ ] **Unit tests for `ForensicsDataset`:** shape `(3, 64, 64)`, label balance, no NaN, val/test split non-overlapping
+- [x] **Stage forensics dataset** under `data/forensics/Data Set {1..4}/Data Set {1..4}/train|validation|test/real|fake`
+- [x] **Implement forensics loader** (`data/forensics_loader.py`) — nested-root resolution, balanced limit, degenerate/adjacent pairing, aligned-root support
+- [x] **Unit tests for forensics loader:** shape, label balance, no NaN, split normalization, nested root, aligned-root behavior
 
-**Done when:** `phase1_branch_a_best.pt` reports forensics-val balanced acc ≥ 77% and F1 ≥ 0.70; flow cache contains exactly 202,599 files; `ForensicsDataset` loader implemented and tested.
+**Done when:** flow cache contains exactly 202,599 files; forensics loader is implemented and tested; Branch A is documented as non-canonical for single-image GAN scoring.
 
 **Proxy result (CelebA):** acc `1.0000`, F1 `1.0000` — proxy gate cleared but not a valid benchmark.  
-**Forensics val result:** ⏳ pending.
+**Forensics val result:** pair diagnostic still pending; not a deployment metric.
 
 ---
 
-## Week 2 — Branches B & C `[COMPLETE — forensics re-eval pending]`
+## Week 2 — Branches B & C `[COMPLETE — forensics gates failed]`
 
 Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remaining architectural question is whether Branch B's implemented 32-D learned expansion is a temporary Phase 2 convenience or the intended long-term contract.
 
@@ -146,7 +146,7 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 
 **Gate:** forensics-val balanced acc ≥ 88%, F1 ≥ 0.88; Branch A freeze verified by test.  
 **Proxy result:** acc `1.0000`, F1 `1.0000` — proxy gate cleared but not a valid benchmark.  
-**Forensics val result:** ⏳ pending.
+**Forensics val result:** direct Phase 2 forensics neural score remains a tooling gap; do not report the proxy score as a forensics benchmark.
 
 ---
 
@@ -173,17 +173,17 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 - [x] Unit tests — Branch C output shape `(B, 28)` ✓; Phase 3 forward pass `(B, 1)` ✓; A+B freeze verified ✓
 - [x] Train Branch C; save `checkpoints/phase3_a_b_c.pt` — best val epoch `8`: balanced acc `0.8741`, F1 `0.9067`, AUC-ROC `0.9484`, loss `0.2726`
 - [ ] **Launch forensics flow pre-computation** → `data/forensics_flow_cache/`
-- [ ] **Evaluate `phase3_a_b_c.pt` on forensics val set**; log score to `runs/phase3_a_b_c_w2/benchmark_summary.json`
+- [x] **Evaluate `phase3_a_b_c.pt` on forensics val set**; validation artifacts are in `runs/forensics_threshold/` and `runs/ensemble_ablation_forensics_val/`
 
 **Gate:** forensics-val balanced acc ≥ 83%, F1 ≥ 0.80; A+B freeze verified; CelebA flow cache still 202,599 files; forensics flow cache started.  
 **CelebA proxy result:** balanced acc `0.8741`, F1 `0.9067` — proxy gate cleared.  
-**Forensics val result:** ⏳ pending.
+**Forensics val result:** Phase 3 neural validation best balanced accuracy `0.5178` at threshold `0.06`; gate not cleared.
 
 ---
 
 ### Week 2 Critical Sync Point
 
-> **End of Week 2** — proxy gates cleared. `phase2_a_b.pt` and `phase3_a_b_c.pt` both exist. Week 3 work can proceed, but forensics val scores are still pending for both checkpoints.
+> **End of Week 2** — proxy gates cleared. `phase2_a_b.pt` and `phase3_a_b_c.pt` both exist. Forensics validation shows the Phase 3 neural checkpoint does not transfer; Phase 2 direct forensics scoring still needs a dedicated wrapper if it must be reported separately.
 
 ---
 
@@ -200,7 +200,7 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 - [x] Implement all 7 ensemble combination experiments
 - [x] Run full 7-combo ensemble job on proxy test split; record in `runs/ensemble_ablation/`
 - [x] Prepare inference handoff artifact — `runs/<run>/inference_contract.json`
-- [ ] **Re-run 7-combo ensemble experiments on forensics val split**; update `runs/ensemble_ablation/` with forensics scores
+- [x] **Re-run 7-combo ensemble experiments on forensics val split**; results in `runs/ensemble_ablation_forensics_val/summary.json`. B+C RF pooled balanced accuracy `0.5000`, F1 `0.0000`, AUC-ROC `0.5505`; gate not cleared.
 
 **Ensemble experiment matrix:**
 
@@ -229,10 +229,10 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 - [x] Run threshold sweep on Phase 3 checkpoint — threshold `0.61`, balanced acc `0.8850`, F1 `0.8808`, TPR `0.8501`, TNR `0.9198`
 - [x] Per-branch probe infrastructure: single-branch logistic probes + neural full-model logit view
 - [x] Save confusion matrices for all 7 configs to `runs/ensemble_ablation/`
-- [ ] **Re-run RF ensemble and threshold sweep on forensics val split** — this is the canonical eval for team-lead handoff
+- [x] **Re-run RF ensemble and threshold sweep on forensics val split** — validation artifacts exist at `runs/ensemble_ablation_forensics_val/` and `runs/forensics_threshold/`
 
 **Proxy result:** B+C RF balanced acc `0.8869`, F1 `0.8837`, AUC-ROC `0.9440` — gate not cleared.  
-**Forensics val result:** ⏳ pending (re-run required).
+**Forensics val result:** B+C RF pooled balanced accuracy `0.5000`, F1 `0.0000`; gate not cleared.
 
 ---
 
@@ -243,7 +243,7 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 - [x] Finalize all 7 ensemble results table; B+C is not deployment-ready on the completed OOD protocol
 - [x] Architecture review: no orphaned branches, no unbounded tensor ops, no missing gradient guards
 - [x] Support OOD eval — load Phase 3 as the neural baseline; accept image dir, output per-image scores
-- [ ] **Run final forensics test-set evaluation** (held-out 50%) — canonical benchmark for team-lead report
+- [x] **Run final forensics test-set evaluation** — canonical locked benchmark in `runs/forensics_eval_final/summary.json`; gate not cleared
 
 ### Dev 2 — OOD Eval, Profiling, Report
 
@@ -253,21 +253,21 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 - [x] Implement OOD evaluation path via `evaluation/ood_eval.py` and `scripts/run_forensics_eval.py`
 - [x] Run B+C ensemble on all local forensics datasets
 - [x] Run Branch A baseline on the same local forensics datasets
-- [ ] **Run final held-out forensics test-set evaluation** (50% split, not the same split used for val) — record as the canonical result in `docs/final-report.md`
-- [ ] **Download and add `ForensicsDataset` loader** if not yet complete from Week 1 (`data/forensics_loader.py`)
+- [x] **Run final held-out forensics test-set evaluation** — recorded in `runs/forensics_eval_final/summary.json`
+- [x] **Download/stage and add forensics loader** (`data/forensics_loader.py`)
 
 **Inference profiling:**
 
-- [ ] Profile forward pass latency per branch (CPU + GPU): Branch A ms/image, Branch B ms/image, Branch C ms/image, full ensemble ms/image
+- [x] Profile forward pass latency per branch: CPU profile written to `runs/inference_profile/summary.json`; MPS/CUDA unavailable to this profiler run
 - [ ] If flow pre-compute is a bottleneck: parallelize with `multiprocessing.Pool`; evaluate CUDA Farnebäck if GPU is available
 
 **Final eval report:**
 
-- [x] Consolidated results table — all 7 ensemble configs × in-domain + forensics OOD
+- [x] Consolidated results table — all 7 transfer ensemble configs × forensics validation/test OOD
 - [x] Per-branch ablation table
-- [x] Confusion matrices (in-domain + per OOD dataset + pooled)
-- [ ] **Forensics test-set final scores** (canonical benchmark)
-- [ ] Inference time profile
+- [x] Confusion matrices (per OOD dataset + pooled); full in-domain matrices remain pending
+- [x] **Forensics test-set final scores** (canonical benchmark)
+- [x] Inference time profile
 - [x] Deployment recommendation: do not ship B+C or A+B+C from this training run; OOD gate failed
 
 **Done when:** forensics test-set eval complete; final report updated with canonical benchmark scores; inference profile logged to `runs/`; `docs/final-report.md` committed.
@@ -303,9 +303,9 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 
 | File                      | Phase | Contents                                            | Status                                                                                                                                          |
 | ------------------------- | ----- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `phase1_branch_a_best.pt` | 1     | Branch A conv + FC                                  | Proxy gate cleared; **forensics val score pending**                                                                                             |
-| `phase2_a_b.pt`           | 2     | Branch A (frozen) + Branch B + FC                   | Proxy gate cleared; **forensics val score pending**                                                                                             |
-| `phase3_a_b_c.pt`         | 3     | A + B (frozen) + Branch C + FC                      | CelebA proxy: balanced acc `0.8741`, F1 `0.9067`, AUC-ROC `0.9484`; **forensics val score pending**; current preferred deployment candidate     |
+| `phase1_branch_a_best.pt` | 1     | Branch A conv + FC                                  | Proxy gate cleared; Branch A forensics pair diagnostic remains non-canonical for GAN single-image scoring                                        |
+| `phase2_a_b.pt`           | 2     | Branch A (frozen) + Branch B + FC                   | Proxy gate cleared; direct Phase 2 forensics neural scoring is still a tooling gap because `ood_eval` is Phase 3/4 feature based                |
+| `phase3_a_b_c.pt`         | 3     | A + B (frozen) + Branch C + FC                      | CelebA proxy: balanced acc `0.8741`, F1 `0.9067`, AUC-ROC `0.9484`; forensics val/test gates fail; current baseline for recovery experiments   |
 | `phase4_ensemble.pt`      | 4     | Staged fine-tune: fusion-only → B+C → Branch A tail | Characterized: balanced acc `0.8850`, F1 `0.8955`, AUC-ROC `0.9499`, TNR `0.72`, TPR `0.97`; not preferred over Phase 3 for balanced deployment |
 
 > **Retain all four checkpoints** until forensics val/test evaluation is complete. Do not discard Phase 4 or earlier checkpoints before the forensics test-set scores are in — the preferred checkpoint may change based on real deepfake benchmark results.
@@ -324,7 +324,7 @@ Dev 1 owns Branch B. Dev 2 owns Branch C. Both run in parallel, but the remainin
 | **B + C**     | **94.4%** | **94.4%** | **0.93** | ⭐ Proposal target              |
 | A + B + C     | 89.5%     | 89.5%     | 0.86     | Branch A dilutes OOD robustness |
 
-> All targets above are evaluated against the **forensics val/test set**, not the CelebA proxy split. Current proxy-task B+C RF result: balanced acc `0.8869`; forensics OOD result: balanced acc `0.4716` — both below the proposal gate. The forensics test-set run in Week 4 is the canonical measurement.
+> All targets above are evaluated against the **forensics val/test set**, not the CelebA proxy split. Current proxy-task B+C RF result: balanced acc `0.8869`; locked forensics test B+C RF result: balanced acc `0.5000` — both below the proposal gate. The `runs/forensics_eval_final/` run is the canonical measurement.
 
 ---
 

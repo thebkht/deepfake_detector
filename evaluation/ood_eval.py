@@ -149,6 +149,7 @@ def run_forensics_eval(
     limit: Optional[int] = None,
     max_batches: Optional[int] = None,
     run_in_domain: bool = False,
+    skip_transfer_ensemble: bool = False,
     branch_a_checkpoint: Optional[Path] = None,
     branch_a_diagnostic: bool = False,
 ) -> Dict[str, Any]:
@@ -188,13 +189,16 @@ def run_forensics_eval(
     else:
         phase4_model = None
 
-    if mode in {"all", "ensemble"} and celeba_features.exists():
+    load_transfer_ensemble = mode in {"all", "ensemble"} and not skip_transfer_ensemble
+    if load_transfer_ensemble and celeba_features.exists():
         transfer_features, transfer_labels, transfer_metadata = load_feature_cache(celeba_features)
         print(f"[ood_eval] CelebA feature cache loaded: {transfer_labels.shape[0]} samples", flush=True)
     else:
         transfer_features = transfer_labels = None
         transfer_metadata = {}
-        if mode in {"all", "ensemble"}:
+        if mode in {"all", "ensemble"} and skip_transfer_ensemble:
+            print("[ood_eval] Transfer ensemble skipped by request", flush=True)
+        elif mode in {"all", "ensemble"}:
             print(f"[ood_eval] WARNING: CelebA feature cache missing at {celeba_features} — ensemble skipped", flush=True)
     
     dataset_records = []
@@ -286,7 +290,11 @@ def run_forensics_eval(
                 print(f"[ood_eval]   B+C bal_acc={b_c_acc:.4f}" if b_c_acc else "[ood_eval]   Ensemble done", flush=True)
 
             else:
-                record["ensemble_error"] = f"CelebA feature cache missing: {celeba_features}"
+                record["ensemble_error"] = (
+                    "Transfer ensemble skipped by request"
+                    if skip_transfer_ensemble
+                    else f"CelebA feature cache missing: {celeba_features}"
+                )
 
             if run_in_domain:
                 train_loader = create_forensics_dataloader(
@@ -349,6 +357,7 @@ def run_forensics_eval(
         "aligned_root": str(aligned_root) if aligned_root else None,
         "branch_b_invert_logits": branch_b_invert_logits,
         "tta": tta,
+        "skip_transfer_ensemble": skip_transfer_ensemble,
         "checkpoint": str(checkpoint),
         "phase4_checkpoint": str(phase4_checkpoint) if phase4_checkpoint else None,
         "celeba_feature_cache": str(celeba_features),
@@ -400,6 +409,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--in-domain", action="store_true", help="Also train diagnostic RFs on forensics train split")
+    parser.add_argument(
+        "--skip-transfer-ensemble",
+        action="store_true",
+        help="With --in-domain, skip CelebA-transfer RFs and run only the forensics-train RF probe",
+    )
     parser.add_argument("--branch-a-diagnostic", action="store_true", help="Run pair-labelled Branch A diagnostic")
     parser.add_argument("--branch-a-checkpoint", default="checkpoints/phase1_branch_a_best.pt")
     return parser
@@ -431,6 +445,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         limit=args.limit,
         max_batches=args.max_batches,
         run_in_domain=args.in_domain,
+        skip_transfer_ensemble=args.skip_transfer_ensemble,
         branch_a_checkpoint=Path(args.branch_a_checkpoint),
         branch_a_diagnostic=args.branch_a_diagnostic,
     )
