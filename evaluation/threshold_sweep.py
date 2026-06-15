@@ -1,4 +1,4 @@
-"""Phase 3 decision-threshold sweep — Week 3 Dev 2.
+"""Phase 3 decision-threshold sweep.
 
 Sweeps the sigmoid decision threshold from 0.01 to 0.99 on the Phase 3
 checkpoint's test-split logits and reports balanced accuracy, F1, TPR, and TNR

@@ -1,4 +1,4 @@
-"""RF ensemble module for Week 3 Dev 2.
+"""RF ensemble module.
 
 Implements:
   - extract_branch_outputs: run a Phase 3/4 model over a dataloader and collect

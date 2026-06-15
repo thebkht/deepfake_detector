@@ -1,6 +1,6 @@
-"""Week 3 Dev 2 — RF ensemble + per-branch ablation runner.
+"""RF ensemble + per-branch ablation runner.
 
-Runs the full Week 3 Dev 2 checklist in one script:
+Runs the full ablation pipeline in one script:
 
   1. Load Phase 3 checkpoint (or Phase 4 for comparison).
   2. Extract branch features (A 2048-D, B 32-D, C 28-D) + labels from the
@@ -98,7 +98,7 @@ def _resolve_device(name: str) -> torch.device:
 
 def _write_summary_markdown(path: Path, summary: Dict[str, Any]) -> None:
     lines = [
-        "# Week 3 Dev 2 — RF Ensemble + Ablation Results",
+        "# RF Ensemble + Ablation Results",
         "",
         f"Split: `{summary['split']}` | Device: `{summary['device']}` | "
         f"Examples: `{summary.get('n_test', '?')}`",
@@ -162,7 +162,7 @@ def _write_summary_markdown(path: Path, summary: Dict[str, Any]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Week 3 Dev 2: RF ensemble + ablation runner"
+        description="RF ensemble + ablation runner"
     )
     parser.add_argument("--config",       default="config/config.yaml")
     parser.add_argument("--checkpoint",   default=None,
@@ -186,7 +186,7 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*60}")
-    print(f" Week 3 Dev 2 — RF Ensemble + Ablation")
+    print(f" RF Ensemble + Ablation")
     print(f"{'='*60}")
     print(f"  Config   : {args.config}")
     print(f"  Run dir  : {run_dir}")

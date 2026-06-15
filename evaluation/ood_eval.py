@@ -366,7 +366,7 @@ def run_forensics_eval(
         "pooled": pooled_summary,
         "duration_s": round(time.perf_counter() - start, 3),
         "handoff_note": (
-            "Dev 2 should consume summary.json/per_dataset CSV artifacts for now; "
+            "Consume summary.json/per_dataset CSV artifacts for now; "
             "a stable evaluate_ood(...) import wrapper is intentionally deferred."
         ),
     }

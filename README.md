@@ -1,232 +1,42 @@
 # Hybrid Three-Branch Deepfake Detector
 
-This repository tracks an in-progress deepfake face detection project based on the project proposal: a hybrid discriminator that combines spatial CNN features, spatiotemporal embedding derivatives, and physics-based dynamics.
+[![CI](https://github.com/thebkht/deepfake_detector/actions/workflows/ci.yml/badge.svg)](https://github.com/thebkht/deepfake_detector/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 
-The codebase is not at full proposal parity yet. Today it includes the completed Branch A baseline, the current Branch B / Phase 2 stack, the trained Branch C / Phase 3 path, the CelebA pair dataset pipeline, the optical-flow precompute utility, and tests around the implemented training path. The docs below distinguish between the proposal target, the code that exists now, and the later-phase work that is still open.
+A research implementation of a hybrid discriminator for deepfake face detection that fuses three complementary signals over consecutive face frames:
 
-## Current Status
+- **Branch A — spatial:** a CNN encoder over single frames (`2048-D`)
+- **Branch B — spatiotemporal:** velocity/derivative statistics across a frame pair (`8-D`, expanded to `32-D`)
+- **Branch C — physics:** deterministic optical-flow and photometric dynamics (`28-D`)
 
-- Implemented: Branch A spatial encoder and paired-frame baseline classifier
-- Implemented: Branch B spatiotemporal summary branch and `DiscriminatorPhase2`
-- Implemented: Branch C physics branch and `DiscriminatorPhase3`
-- Implemented: Phase 2 A+B trainer CLI and checkpoint/report writing
-- Implemented: Phase 3 A+B+C trainer CLI, resume wiring, and flow-cache preflight checks
-- Implemented: CelebA dataloader with real/fake pair construction
-- Implemented: validation-loss overfitting stop logic for Branch A and Phase 2
-- Implemented: generic checkpoint save/load helpers and standalone hinge-loss module
-- Implemented: offline Farneback optical-flow precompute utility
-- Implemented: standalone Branch A test-split confusion-matrix evaluation
-- Implemented: metric computation, checkpointing, confusion-matrix plotting, run summaries, and optional TensorBoard logging
-- Verified: Branch B regression tests, Branch C golden-feature tests, Branch A/B freeze tests, data pipeline tests, overfit-stop unit tests, and Branch A evaluation smoke tests
-- Verified: `checkpoints/phase3_a_b_c.pt` and `runs/phase3_a_b_c_w2/` clear the configured Phase 3 gate at epoch `8` with balanced accuracy `0.8741`, F1 `0.9067`, AUC-ROC `0.9484`, and validation loss `0.2726`
-- Implemented: Phase 4 fine-tuning path, staged-unfreeze `DiscriminatorPhase4`, fake-positive asymmetric BCE+hinge loss, and `inference_contract.json` handoff artifact generation
-- Verified: the final Phase 4 run improved balanced accuracy only marginally (`0.8790 -> 0.8850`) and AUC-ROC (`0.9480 -> 0.9499`), but reduced F1 (`0.9072 -> 0.8955`) and real-class TNR (`0.78 -> 0.72`); Phase 3 is the current best deployment candidate under the balanced objective
-- Verified: RF branch-combination ensemble, neural-logit ablation, and Phase 3 threshold sweep ran under `runs/ensemble_ablation/` on the balanced test subset of `13,074` examples
-- Verified: B+C RF did not clear the proposal gate, with balanced accuracy `0.8869`, F1 `0.8837`, and AUC-ROC `0.9440`; A+B+C RF was the strongest probe in this run at balanced accuracy `0.8992`, F1 `0.8962`, and AUC-ROC `0.9471`
-- Verified: Phase 3 threshold sweep selected threshold `0.61` for best balanced accuracy `0.8850`, with F1 `0.8808`, TPR `0.8501`, and TNR `0.9198`
-- Verified: full forensics OOD evaluation completed under `runs/forensics_eval/` across `20,905` images; all CelebA-trained transfer ensembles fail the OOD gate, with B+C RF at balanced accuracy `0.4716` and F1 `0.4981`
-- Active runtime contract: `2048 + 32 + 28 = 2108`; the proposal-parity `2048 + 8 + 28 = 2084` fusion contract is not the current load-compatible path
-- Historical checkpoint: `checkpoints/phase2_a_b.pt` was trained on the legacy pre-Run 3 Branch B architecture and should not be treated as the current baseline
+The branches are concatenated (`2048 + 32 + 28 = 2108`) and trained in four sequential phases, each building on the previous one's frozen weights.
 
-## Repository Layout
-
-```text
-deepfake_detector/
-├── config/
-│   └── config.yaml
-├── data/
-│   ├── augmentations.py
-│   ├── celeba_loader.py
-│   └── precompute_flow.py
-├── docs/
-│   ├── build-plan.md
-│   └── master-plan.md
-├── evaluation/
-│   ├── branch_a_eval.py
-│   ├── ensemble.py
-│   ├── eval.py
-│   ├── inference_handoff.py
-│   └── threshold_sweep.py
-├── models/
-│   ├── branch_a.py
-│   ├── branch_b.py
-│   ├── branch_c.py
-│   └── discriminator.py
-├── scripts/
-│   ├── download_celeba.sh
-│   ├── eval_pred_all_branches.py
-│   └── run_ensemble_ablation.py
-├── tests/
-│   ├── test_bootstrap_and_imports.py
-│   ├── test_branch_a_baseline.py
-│   ├── test_data.py
-│   ├── test_model.py
-│   └── test_overfit_stop.py
-├── training/
-│   ├── batch_preview.py
-│   ├── checkpointing.py
-│   ├── eval_branch_a.py
-│   ├── losses.py
-│   ├── overfit_stop.py
-│   ├── phase1_train.py
-│   ├── phase2_train.py
-│   ├── phase2_trainer.py
-│   ├── phase3_train.py
-│   ├── phase3_trainer.py
-│   ├── phase4_finetune.py
-│   ├── phase4_trainer.py
-│   ├── run_artifacts.py
-│   ├── tracker.py
-│   └── trainer.py
-├── pyrightconfig.json
-├── requirements.txt
-└── README.md
-```
+> [!IMPORTANT]
+> **Scope & intended use.** This is a research and educational project for **defensive media forensics**. It is a *detector* and does not generate synthetic media. The current training signal is a **proxy task** ("same identity vs. different identity" image pairs from CelebA), not real generative manipulations, and out-of-domain transfer to real forensics data currently **does not generalize**. Treat the numbers here as a reproducible baseline, not a production deepfake classifier. Do not use it to make consequential decisions about individuals, and respect the license/terms of any dataset you use.
 
 ## Architecture
 
-### Proposal target
+The detector operates on consecutive `64 × 64` RGB face frames. Source lives in [`models/`](models/), with training orchestration in [`training/`](training/).
 
-The proposal defines a three-branch discriminator over consecutive `64 x 64` RGB face frames:
+| Branch | Module | Output | Description |
+| ------ | ------ | ------ | ----------- |
+| A — spatial | [`models/branch_a.py`](models/branch_a.py) | `2048-D` | Five spectral-normalized conv blocks per frame. `BranchABaseline` classifies the concatenated `4096-D` pair. |
+| B — spatiotemporal | [`models/branch_b.py`](models/branch_b.py) | `8 → 32-D` | Reuses the pretrained `BranchAEncoder` and derives an `8-D` velocity summary, normalized and expanded to a learned `32-D` feature. |
+| C — physics | [`models/branch_c.py`](models/branch_c.py) | `28-D` | Deterministic extractor: `20-D` optical-flow summaries + `8-D` HSV photometric summaries. |
 
-- Branch A: spatial CNN encoder, `2048-D`
-- Branch B: spatiotemporal derivative summary, `8-D`
-- Branch C: optical-flow + photometric dynamics, `28-D`
-- Proposal fusion head: concatenated `2084-D -> 512 -> 128 -> 1`
-- Active runtime fusion head: concatenated `2108-D -> 512 -> 128 -> 1`
+Fusion and the phased discriminators (`DiscriminatorPhase2/3/4`) live in [`models/discriminator.py`](models/discriminator.py). Training proceeds in phases:
 
-The intended training order is:
+1. **Phase 1** — train Branch A end-to-end.
+2. **Phase 2** — add Branch B; Branch A is frozen except the last two blocks (fused at `2048 + 32`).
+3. **Phase 3** — add Branch C with A+B frozen (fused at `2108`). Requires a precomputed optical-flow cache and `adjacent_cache` frame pairing.
+4. **Phase 4** — fine-tune the fused model with staged unfreezing and an asymmetric loss.
 
-1. Train Branch A end-to-end.
-2. Add Branch B with Branch A partially frozen, then finetune the shared encoder tail.
-3. Add Branch C with earlier branches frozen.
-4. Fine-tune the fused model and evaluate branch ensembles, with B+C treated as the strongest OOD-oriented configuration in the proposal.
+> **Note on conventions:** the label convention is **fake-positive** (`fake = 1`), and Phase 3/4 must use `pairing_mode="adjacent_cache"` so cached flow tensors align with the correct frame pair. See [CONTRIBUTING.md](CONTRIBUTING.md) for the invariants to preserve when modifying the pipeline.
 
-### Current implementation
+## Installation
 
-The repository currently implements Branch A, the A+B Phase 2 stack, and the A+B+C Phase 3 code path.
-
-Branch A in [models/branch_a.py](models/branch_a.py):
-
-- `BranchAEncoder`: five convolution blocks with spectral normalization and LeakyReLU, outputting a `2048-D` feature from one frame
-- `BranchABaseline`: applies the encoder to both frames and classifies the concatenated `4096-D` pair representation
-
-Branch B and Phase 2 in [models/branch_b.py](models/branch_b.py) and [models/discriminator.py](models/discriminator.py):
-
-- `BranchB_Spatiotemporal` now reuses the pretrained `BranchAEncoder` for both frames instead of a separate `EmbedCNN`
-- Committed temporal summary: `8-D` `[vel_mean, vel_std, vel_max, vel_min, cos_sim, l2_dist, sign_consistency, abs_vel_mean]`
-- The `8-D` summary is normalized with `LayerNorm(8)` and expanded to a learned `32-D` feature before fusion
-- `DiscriminatorPhase2` keeps `feat_a` on a `no_grad()` path, finetunes only the last two Branch A blocks through Branch B, and fuses `2048 + 32 = 2080` features through a stronger dropout head
-
-Branch C and Phase 3 in [models/branch_c.py](models/branch_c.py), [models/discriminator.py](models/discriminator.py), and [training/phase3_trainer.py](training/phase3_trainer.py):
-
-- `BranchC_Physics` is a deterministic `28-D` feature extractor: `20-D` flow summaries plus `8-D` HSV photometric summaries
-- `DiscriminatorPhase3` loads frozen Phase 2 Branch A+B weights, concatenates `2048 + 32 + 28 = 2108` features, and trains only Branch C plus a fresh fusion head
-- Phase 3 enforces the current cache contract by requiring `include_flow=True` and `pairing_mode="adjacent_cache"` dataloaders, then verifying the cached flow directory before training starts
-- The repository also ships `training/checkpointing.py` and `training/losses.py`, including resume support and a standalone `HingeLoss` module for later phases
-
-This means the current code now reaches the proposal's three-branch structure and includes the Phase 4 fine-tuning path and full forensics OOD evaluation. The active Phase 3 and Phase 4 path uses the current `32-D` Branch B expansion, so the runtime contract remains `2048 + 32 + 28 = 2108`. The RF ensemble and threshold-sweep artifacts are present under `runs/ensemble_ablation/`; full transfer results are present under `runs/forensics_eval/`.
-
-Phase 4 in [models/discriminator.py](models/discriminator.py), [training/phase4_trainer.py](training/phase4_trainer.py), and [training/losses.py](training/losses.py):
-
-- `DiscriminatorPhase4` loads the Phase 3 `2108-D` contract but starts in a fusion-only trainable state
-- Training uses staged unfreezing: fusion head first, Branch B expander + Branch C next, then the last two Branch A blocks at a lower LR
-- The Phase 4 loss is `AsymmetricCombinedLoss`, which keeps the repository's fake-positive logit convention and upweights real-class mistakes with `real_weight`
-- The old standalone `CombinedBCEHingeLoss` remains available for tests and comparison, but it is not the active Phase 4 trainer loss
-- Final Phase 4 evaluation did not become the deployment path: it increased fake recall (`TPR 0.94 -> 0.97`) while lowering real specificity (`TNR 0.78 -> 0.72`) and F1, consistent with overfitting the proxy training distribution rather than improving generalization
-
-## Dataset Pipeline
-
-The dataset code in [data/celeba_loader.py](data/celeba_loader.py) builds pair-labeled samples from CelebA.
-
-Real pairs:
-
-- If `identity_CelebA.txt` is present, the loader pairs images from the same identity.
-- If the identity file is missing, it falls back to adjacent-image pairing.
-
-Fake pairs:
-
-- The current baseline does not use GAN-generated or diffusion-generated fakes.
-- With `identity_CelebA.txt` present, it pairs the anchor with a frame from a different identity.
-- If the identity file is missing, it falls back to a deterministic distant-index pair.
-
-Transforms from [data/augmentations.py](data/augmentations.py):
-
-- Resize to `64 x 64`
-- Random horizontal flip during training
-- Color jitter during training
-- Normalize tensors to `[-1, 1]`
-
-This means current metrics are still only useful as a proxy-task baseline and are not representative of real deepfake performance. The task is still "same identity vs. different identity", not detection over real generative manipulations or OOD deepfakes.
-
-## Configuration
-
-The default config lives at [config/config.yaml](config/config.yaml).
-
-Key defaults:
-
-- Dataset size target: `202,599` images
-- Native resolution target: `178 x 218`
-- Batch size: `64`
-- Epochs: `100`
-- Learning rate: `1.5e-4`
-- Shared-backbone finetuning: last `2` Branch A blocks trainable at `0.1x` LR
-- Scheduler: `CosineAnnealingLR`
-- Checkpoint metric: `balanced_accuracy`
-- Default checkpoint name: `phase1_branch_a_best.pt`
-- Early-stop defaults: warmup `3`, overfit patience `5`, val-loss ceiling patience `3`, Branch A ceiling `0.35`
-
-The file now also contains dedicated `phase2:` and `phase3:` blocks.
-
-Phase 2 defaults:
-
-- Epochs: `20`
-- Learning rate: `1.5e-4`
-- Scheduler: `CosineAnnealingLR`
-- Pretrained Branch A checkpoint: `phase1_branch_a_best.pt`
-- Default Phase 2 checkpoint name: `phase2_a_b.pt`
-- Targets: balanced accuracy `>= 0.88`, F1 `>= 0.88`
-- Early-stop defaults: warmup `3`, overfit patience `5`, val-loss ceiling patience `3`, validation balanced-accuracy patience `4`, Phase 2 ceiling `0.40`
-
-Phase 3 defaults:
-
-- Epochs: `20`
-- Learning rate: `2e-4`
-- Scheduler: `CosineAnnealingLR`
-- Pretrained Phase 2 checkpoint: `phase2_a_b.pt`
-- Default Phase 3 checkpoint name: `phase3_a_b_c.pt`
-- Pairing mode: `adjacent_cache`
-- Targets: balanced accuracy `>= 0.83`, F1 `>= 0.80`
-- Early-stop defaults currently include overfit patience `5` and validation-loss ceiling `0.45`
-
-Phase 4 defaults:
-
-- Epochs: `30`
-- Base learning rate: `5e-5`
-- Scheduler: `CosineAnnealingLR`
-- Pretrained Phase 3 checkpoint: `phase3_a_b_c.pt`
-- Default Phase 4 checkpoint name: `phase4_ensemble.pt`
-- Pairing mode: `adjacent_cache`
-- Loss: `AsymmetricCombinedLoss` with `bce_weight=0.7`, `hinge_weight=0.3`, `real_weight=1.5`, `fake_weight=1.0`, and margin `0.8`
-- Staged unfreezing: 10 epochs fusion-only at `5e-5`, 10 epochs Branch B expander + Branch C at `2e-5`, then 10 epochs with the last two Branch A blocks at `5e-6`
-- Early stopping is stage-aware: a plateau in Stage 1 or Stage 2 advances to the next stage instead of ending the full Phase 4 run
-
-By default, outputs are written to:
-
-- `checkpoints/phase1_branch_a_best.pt`
-- `runs/<run-name>/benchmark_summary.json`
-- `runs/<run-name>/benchmark_summary.md`
-- `runs/<run-name>/metrics_history.json`
-- `runs/<run-name>/train_batch0.jpg` through `train_batch2.jpg`
-- `runs/<run-name>/val_batch0_labels.jpg` through `val_batch2_labels.jpg`
-- `runs/<run-name>/val_batch0_pred.jpg` through `val_batch2_pred.jpg`
-- `runs/<run-name>/confusion_matrix.png`
-- `runs/<run-name>/confusion_matrix_normalized.png`
-- `runs/<run-name>/results.png`
-
-## Setup
-
-Create an environment and install dependencies:
+Requires Python 3.11 or 3.12.
 
 ```bash
 python3 -m venv .venv
@@ -235,124 +45,17 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Dependencies from [requirements.txt](requirements.txt):
+## Dataset
 
-- `torch`
-- `torchvision`
-- `opencv-python`
-- `numpy`
-- `scikit-learn`
-- `Pillow`
-- `tqdm`
-- `tensorboard`
-- `pyyaml`
-- `matplotlib`
-
-## Download CelebA
-
-Use the bootstrap script:
+The pipeline trains on [CelebA](https://www.kaggle.com/datasets/jessicali9530/celeba-dataset). A bootstrap script downloads and extracts it:
 
 ```bash
 bash scripts/download_celeba.sh
 ```
 
-Prerequisites:
+This requires the Kaggle CLI and credentials at `~/.kaggle/kaggle.json`. The loader ([`data/celeba_loader.py`](data/celeba_loader.py)) builds real pairs (same identity) and fake pairs (different identity) when `identity_CelebA.txt` is present, falling back to index-based pairing otherwise.
 
-- Kaggle CLI installed
-- Kaggle credentials at `~/.kaggle/kaggle.json`
-
-The tests include explicit failure checks for missing Kaggle CLI and missing credentials.
-
-## Train The Branch A Baseline
-
-Run the baseline trainer:
-
-```bash
-python3 -m training.phase1_train --config config/config.yaml --run-name branch_a_baseline
-```
-
-Useful flags:
-
-- `--train-limit`: cap train samples for smoke runs
-- `--val-limit`: cap validation samples for smoke runs
-- `--epochs-override`: override configured epochs
-- `--device cpu|cuda|mps`: force a device; default is `mps`, then `cuda`, then `cpu`
-- `--tracker-backend tensorboard`: emit TensorBoard logs under `runs/<run-name>/tensorboard`
-
-Example short smoke run:
-
-```bash
-python3 -m training.phase1_train \
-  --config config/config.yaml \
-  --run-name smoke \
-  --train-limit 512 \
-  --val-limit 128 \
-  --epochs-override 1 \
-  --device cpu
-```
-
-The Branch A trainer now stops early if either of these sustained patterns appears:
-
-- validation loss worsens while train loss improves for `5` consecutive epochs
-- after a `3`-epoch warmup, validation loss stays above `0.35` for `3` consecutive epochs while `train_loss < val_loss`
-
-Each Branch A run also saves:
-
-- training preview grids for the first three train batches
-- validation label/prediction preview grids for the first three validation batches
-- `confusion_matrix.png` and `confusion_matrix_normalized.png` from the best validation epoch
-- `results.png` with train loss, validation loss, validation balanced accuracy, and validation F1 curves
-
-## Train Phase 2 A+B
-
-Run the Phase 2 trainer:
-
-```bash
-python3 -m training.phase2_train --config config/config.yaml --run-name phase2_a_b
-```
-
-Useful flags:
-
-- `--train-limit`: cap train samples for smoke runs
-- `--val-limit`: cap validation samples for smoke runs
-- `--epochs-override`: override configured epochs
-- `--max-batches`: cap batches per split for very short dry-runs
-- `--checkpoint-name-override`: avoid overwriting the final checkpoint during smoke runs
-- `--device cpu|cuda|mps`: force a device; default is `mps`, then `cuda`, then `cpu`
-
-Example smoke run:
-
-```bash
-python3 -m training.phase2_train \
-  --config config/config.yaml \
-  --run-name phase2_a_b_smoke \
-  --train-limit 256 \
-  --val-limit 64 \
-  --epochs-override 1 \
-  --max-batches 2 \
-  --checkpoint-name-override phase2_a_b_smoke.pt \
-  --device cpu
-```
-
-The Phase 2 trainer uses the same overfit trend rule and a Phase 2 loss ceiling of `0.40`.
-
-Each Phase 2 run writes preview JPGs during training and also attempts the same plotting artifacts as Branch A:
-
-- `train_batch*.jpg`
-- `val_batch*_labels.jpg`
-- `val_batch*_pred.jpg`
-- `confusion_matrix.png`
-- `confusion_matrix_normalized.png`
-- `results.png`
-
-Notes:
-
-- Preview JPGs are saved from the first few train and validation batches during the run.
-- Plot PNGs require `matplotlib`. If it is not installed in the active Python environment, training still completes but the plotting files are skipped.
-
-## Precompute Optical Flow
-
-The flow utility in [data/precompute_flow.py](data/precompute_flow.py) currently supports Farneback flow only.
+Branch C / Phase 3+ additionally require a precomputed optical-flow cache:
 
 ```bash
 python3 -m data.precompute_flow \
@@ -362,215 +65,121 @@ python3 -m data.precompute_flow \
   --image-size 64
 ```
 
-This produces one `*_flow.pt` tensor per image. These tensors are the required input substrate for the implemented Phase 3 Branch C path.
+## Usage
 
-## Train Phase 3 A+B+C
-
-Run the Phase 3 trainer:
+Each phase has a trainer module. Common flags: `--run-name`, `--device cpu|cuda|mps`, `--epochs-override`, and smoke-run caps (`--train-limit`, `--val-limit`, `--max-batches`). Defaults are configured per phase in [`config/config.yaml`](config/config.yaml).
 
 ```bash
+# Phase 1 — Branch A baseline
+python3 -m training.phase1_train --config config/config.yaml --run-name phase1
+
+# Phase 2 — A + B
+python3 -m training.phase2_train --config config/config.yaml --run-name phase2_a_b
+
+# Phase 3 — A + B + C  (needs the flow cache above)
 python3 -m training.phase3_train --config config/config.yaml --run-name phase3_a_b_c
+
+# Phase 4 — fine-tune the fused model
+python3 -m training.phase4_finetune --config config/config.yaml --run-name phase4
 ```
 
-Useful flags:
+Each run writes checkpoints to `checkpoints/` and metrics, confusion matrices, preview grids, and curves to `runs/<run-name>/`.
 
-- `--train-limit`: cap train samples for smoke runs
-- `--val-limit`: cap validation samples for smoke runs
-- `--epochs-override`: override configured epochs
-- `--max-batches`: cap batches per split for very short dry-runs
-- `--num-workers`: override the Phase 3 dataloader worker count
-- `--checkpoint-name-override`: avoid overwriting the final checkpoint during smoke runs
-- `--resume`: resume from a saved Phase 3 checkpoint
-- `--device cpu|cuda|mps`: force a device; default comes from `phase3.device`, then falls back through the usual resolver
-
-Example smoke run:
+### Evaluation
 
 ```bash
-python3 -m training.phase3_train \
-  --config config/config.yaml \
-  --run-name phase3_a_b_c_smoke \
-  --train-limit 256 \
-  --val-limit 64 \
-  --epochs-override 1 \
-  --max-batches 2 \
-  --checkpoint-name-override phase3_a_b_c_smoke.pt \
-  --num-workers 0 \
-  --device cpu
-```
+# Branch A test-split evaluation
+python3 -m training.eval_branch_a --config config/config.yaml --run-name eval_branch_a
 
-Phase 3 currently trains with `BCEWithLogitsLoss`, not the proposal's later fine-tuning loss mix. Before the first epoch it also:
-
-- verifies the flow cache stem set against the image tree
-- requires cached flow tensors to be available for `adjacent_cache` pairing
-- loads Branch A+B weights from the configured Phase 2 checkpoint and freezes those branches
-
-## Evaluation And Targets
-
-The implemented evaluation in [evaluation/eval.py](evaluation/eval.py) reports:
-
-- Balanced accuracy
-- F1 score
-- AUC-ROC
-- Loss
-- Confusion-matrix plots
-
-The repository also includes a standalone Branch A test evaluator in [training/eval_branch_a.py](training/eval_branch_a.py). It loads a saved Branch A checkpoint, runs the `test` split, and writes:
-
-- `runs/<run-name>/confusion_matrix.json`
-- `runs/<run-name>/confusion_matrix.png`
-- `runs/<run-name>/eval_report.md`
-
-Run the Branch A evaluator with:
-
-```bash
-python3 -m training.eval_branch_a --config config/config.yaml --run-name branch_a_test_eval
-```
-
-Optional checkpoint override:
-
-```bash
-python3 -m training.eval_branch_a \
-  --config config/config.yaml \
-  --checkpoint checkpoints/phase1_branch_a_best.pt \
-  --run-name branch_a_test_eval
-```
-
-The branch comparison script in [scripts/eval_pred_all_branches.py](scripts/eval_pred_all_branches.py) exports prediction CSVs and confusion matrices for available Branch A, Phase 2, Phase 3, and Phase 4 checkpoints. For Phase 3 and Phase 4 it keeps `pairing_mode="adjacent_cache"` so cached flow tensors still match their adjacent partners, then balances the exported evaluation rows by class. The summary records both the balanced eval count and the original source class counts.
-
-Run the branch comparison evaluator with:
-
-```bash
-python3 scripts/eval_pred_all_branches.py --config config/config.yaml --run-dir runs/eval_pred_all_branches --device cpu
-```
-
-## RF Ensemble, Ablation, And Threshold Sweep
-
-The RF ensemble helpers in [evaluation/ensemble.py](evaluation/ensemble.py) extract frozen Branch A/B/C features from a Phase 3 or Phase 4 model using the active `2048 + 32 + 28` contract. The canonical seven branch combinations are:
-
-- A, B, and C single-branch logistic probes
-- A+B, A+C, B+C, and A+B+C random-forest probes
-
-Run the combined Week 3 evaluator with:
-
-```bash
+# RF ensemble + per-branch ablation + threshold sweep
 python3 scripts/run_ensemble_ablation.py \
   --config config/config.yaml \
   --checkpoint checkpoints/phase3_a_b_c.pt \
-  --run-dir runs/ensemble_ablation \
-  --device cpu
-```
+  --run-dir runs/ensemble_ablation --device cpu
 
-Useful smoke-run options:
-
-- `--limit`: cap evaluated examples
-- `--split train|val|test`: choose the source split; default is `test`
-- `--sweep-steps`: choose the number of threshold points; default is `99`
-- `--num-workers`: override dataloader workers
-
-This writes `summary.json`, `summary.md`, threshold-sweep artifacts, neural full-model confusion matrices, and normalized/non-normalized confusion matrices for all seven branch combinations under the chosen run directory. The script balances the extracted examples by class, then uses an 80/20 split for the RF/logistic probe.
-
-Current full-run result from `runs/ensemble_ablation/summary.md`:
-
-| Config | Classifier | Bal Acc | F1 | AUC-ROC |
-| ------ | ---------- | ------- | -- | ------- |
-| A only | Logistic | 0.6529 | 0.6224 | 0.6860 |
-| B only | Logistic | 0.8930 | 0.8897 | 0.9471 |
-| C only | Logistic | 0.5530 | 0.5516 | 0.5717 |
-| A+B | RF | 0.8939 | 0.8913 | 0.9463 |
-| A+C | RF | 0.6636 | 0.6338 | 0.6966 |
-| B+C | RF | 0.8869 | 0.8837 | 0.9440 |
-| A+B+C | RF | 0.8992 | 0.8962 | 0.9471 |
-
-The B+C RF probe did not clear the proposal target of balanced accuracy `>= 0.944` and F1 `>= 0.93` on this proxy-task run. The strongest probe was A+B+C RF, while the best neural Phase 3 threshold was `0.61`, giving balanced accuracy `0.8850`, F1 `0.8808`, TPR `0.8501`, and TNR `0.9198`.
-
-To run only the Phase 3 threshold sweep:
-
-```bash
+# Phase 3 decision-threshold sweep only
 python3 -m evaluation.threshold_sweep \
   --config config/config.yaml \
   --checkpoint checkpoints/phase3_a_b_c.pt \
-  --run-dir runs/threshold_sweep_phase3 \
-  --device cpu
+  --run-dir runs/threshold_sweep --device cpu
 ```
 
-The Week 1 trainer uses baseline targets:
+The ensemble evaluator extracts frozen A/B/C features and trains seven branch-combination probes (single-branch logistic + A+B / A+C / B+C / A+B+C random forests), reporting balanced accuracy, F1, and AUC-ROC with confusion matrices.
 
-- Balanced accuracy: `>= 0.77`
-- F1: `>= 0.70`
+## Results
 
-The Phase 2 trainer uses:
+These are **in-domain proxy-task** numbers (same-vs-different identity on CelebA), reported for reproducibility — not deepfake-detection performance.
 
-- Balanced accuracy: `>= 0.88`
-- F1: `>= 0.88`
+**Branch-combination probes** (balanced test subset):
 
-These are still in-domain proxy-task gates, not realistic deepfake benchmarks. The proposal's headline `94.4%` balanced-accuracy result refers to the recommended B+C ensemble on difficult OOD content, which this repository has not reproduced yet.
+| Config | Classifier | Bal. Acc | F1     | AUC-ROC |
+| ------ | ---------- | -------- | ------ | ------- |
+| A      | Logistic   | 0.6529   | 0.6224 | 0.6860  |
+| B      | Logistic   | 0.8930   | 0.8897 | 0.9471  |
+| C      | Logistic   | 0.5530   | 0.5516 | 0.5717  |
+| A+B    | RF         | 0.8939   | 0.8913 | 0.9463  |
+| A+C    | RF         | 0.6636   | 0.6338 | 0.6966  |
+| B+C    | RF         | 0.8869   | 0.8837 | 0.9440  |
+| A+B+C  | RF         | 0.8992   | 0.8962 | 0.9471  |
 
-## Forensics OOD Evaluation
+Among the neural checkpoints, **Phase 3 is the strongest deployment candidate** under a balanced objective (Phase 4's asymmetric fine-tuning improved fake recall but degraded real-class specificity and F1).
 
-Full OOD artifacts are written under `runs/forensics_eval/`. The main handoff artifact for Dev 2 is `runs/forensics_eval/summary.json`, with per-image CSVs under `runs/forensics_eval/per_dataset/` and pooled confusion matrices under `runs/forensics_eval/pooled/`.
+**Out-of-domain transfer** to real forensics images currently fails — every CelebA-trained ensemble collapses toward chance:
 
-Pooled transfer ensemble result across `20,905` forensics images:
+| Config | Bal. Acc | F1     | AUC-ROC |
+| ------ | -------- | ------ | ------- |
+| A      | 0.5014   | 0.6683 | 0.5344  |
+| B      | 0.4683   | 0.4764 | 0.4559  |
+| B+C    | 0.4716   | 0.4981 | 0.4572  |
+| A+B+C  | 0.4843   | 0.5633 | 0.4635  |
 
-| Config | Balanced accuracy | F1 | AUC-ROC |
-| ------ | ----------------: | --: | ------: |
-| A only | 0.5014 | 0.6683 | 0.5344 |
-| B only | 0.4683 | 0.4764 | 0.4559 |
-| C only | 0.4996 | 0.6678 | 0.4495 |
-| A+B | 0.4820 | 0.5629 | 0.4602 |
-| A+C | 0.5021 | 0.6659 | 0.4915 |
-| B+C | 0.4716 | 0.4981 | 0.4572 |
-| A+B+C | 0.4843 | 0.5633 | 0.4635 |
+The takeaway: CelebA identity-pair features do not transfer to real manipulated-face content. Closing this gap is the focus of the roadmap below.
 
-The OOD gate fails. The pooled confusion matrices show real-class collapse for A, C, A+C, and fake-biased combinations, while Branch B loses polarity on the forensics distribution. See `docs/final-report.md` for the final interpretation.
+## Project layout
 
-## Tests
+```text
+config/        config.yaml — per-phase hyperparameters and paths
+data/          CelebA loader, augmentations, optical-flow precompute, face alignment
+models/        branch_a/b/c.py and discriminator.py (phased fusion heads)
+training/      phaseN_train.py CLIs + trainers, losses, checkpointing, early-stop, artifacts
+evaluation/    metrics, RF ensemble, threshold sweep, forensics/OOD evaluation
+scripts/       dataset download, ablation and forensics runners
+tests/         unittest suite (self-contained; no dataset or checkpoint required)
+```
 
-Run the test suite with:
+## Testing
+
+The suite is self-contained — it synthesizes fixtures in temp directories and needs no dataset or trained checkpoint.
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -s tests          # full suite
+python -m unittest tests.test_model           # a single module
 ```
 
-Coverage currently includes:
-
-- Branch A forward-pass shape checks
-- Branch B output shape and golden numerical regression
-- Branch C output shape and golden feature regression
-- Phase 2 discriminator output shape
-- Phase 3 discriminator output shape
-- Branch A frozen-after-step verification for Phase 2
-- Branch A + Branch B frozen-after-step verification for Phase 3
-- Phase 1 checkpoint load/remap verification for Phase 2
-- Phase 2-to-Phase 3 load verification and Phase 3 resume helper coverage
-- Metric computation sanity checks
-- Hinge-loss label-convention test
-- Scheduler configuration checks
-- End-to-end training smoke test with checkpoint, preview-image, and plot generation
-- Dataset shape, label balance, normalization, and pairing behavior
-- Optical-flow precompute smoke test
-- Import/bootstrap checks
-- TensorBoard tracker smoke test when TensorBoard is installed
+CI runs the same suite on Python 3.11 and 3.12 for every push and pull request.
 
 ## Limitations
 
-- Branch C and Phase 3 are implemented and trained, but the current result is still an in-domain proxy task rather than a real deepfake benchmark.
-- Phase 4 fine-tuning is implemented and has been run, but its asymmetric loss worsened the TNR/TPR balance and should not replace the Phase 3 checkpoint for deployment-style evaluation.
-- Current fake samples are cross-identity proxy negatives, not actual deepfakes.
-- Out-of-domain evaluation is implemented and complete for the local forensics datasets, but all current transfer results fail the deployment gate.
-- Branch-combination ensemble and threshold-sweep tooling has been run on the proxy test split and the forensics OOD split; B+C did not clear either gate, so these results should not be treated as a deployment result.
-- Phase 3/4 flow-aware evaluation must keep `adjacent_cache`; switching those phases to default pairing would attach cached flow tensors to the wrong frame pair unless the cache is regenerated.
-- The proposal's direct `2048 + 8 + 28 = 2084` fusion contract is still not the active runtime contract; the current Phase 3 and Phase 4 stack uses `2048 + 32 + 28 = 2108`.
-- If `identity_CelebA.txt` is missing, real pairs fall back to adjacent-image pairing.
-- If `identity_CelebA.txt` is missing, fake pairs fall back to deterministic distant-index pairing.
-- `phase2_a_b.pt` may be a legacy pre-Run 3 checkpoint; verify the checkpoint provenance before treating it as a Phase 3 base.
-- The checked-in pseudo-identity file may be attribute-derived rather than true CelebA identity labels, depending on local workspace state.
-- The checked-in `.venv` may be stale; in this workspace `pytest` was not available in the active interpreter.
+- The training signal is a **proxy task** (cross-identity pairs), not real generative deepfakes, so in-domain metrics do not reflect real detection performance.
+- Out-of-domain transfer to forensics data currently fails the deployment gate for all branch combinations.
+- Phase 4's asymmetric fine-tuning worsened the precision/recall balance; Phase 3 remains the recommended checkpoint.
+- Phase 3/4 evaluation must keep `pairing_mode="adjacent_cache"` — other pairing modes attach cached flow tensors to the wrong frame pair unless the cache is regenerated.
+- If `identity_CelebA.txt` is missing, pairing falls back to index-based heuristics; a locally supplied pseudo-identity file may be attribute-derived rather than true identity labels.
 
 ## Roadmap
 
-The planned next steps are:
-
 1. Replace cross-identity proxy negatives with true manipulated-face training sources.
-2. Add domain adaptation or train transfer classifiers on forensics-like manipulations instead of CelebA identity-pair features only.
-3. Rerun the same `runs/forensics_eval/` protocol after retraining.
-4. Treat A+B+C RF only as a comparison baseline unless a future OOD run clears the gate.
+2. Add domain adaptation, or train transfer classifiers on forensics-like manipulations rather than CelebA identity-pair features alone.
+3. Re-run the forensics OOD protocol after retraining.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, test commands, and the invariants to preserve, and the [Code of Conduct](CODE_OF_CONDUCT.md). Report security issues privately per [SECURITY.md](SECURITY.md).
+
+## Citation
+
+If you use this work, please cite it using the metadata in [CITATION.cff](CITATION.cff).
+
+## License
+
+Released under the MIT License — see [LICENSE](LICENSE).
