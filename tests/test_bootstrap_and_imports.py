@@ -16,6 +16,10 @@ DOWNLOAD_SCRIPT = PROJECT_ROOT / "scripts" / "download_celeba.sh"
 
 
 class BootstrapAndImportTestCase(unittest.TestCase):
+    @unittest.skipUnless(
+        shutil.which("kaggle") is not None,
+        "kaggle CLI not installed; this test exercises the script's PATH handling",
+    )
     def test_missing_kaggle_cli_fails_clearly(self) -> None:
         kaggle_path = shutil.which("kaggle")
         self.assertIsNotNone(kaggle_path)
@@ -35,6 +39,10 @@ class BootstrapAndImportTestCase(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("kaggle CLI is not installed", result.stderr)
 
+    @unittest.skipUnless(
+        shutil.which("kaggle") is not None,
+        "kaggle CLI not installed; script exits at the CLI check before reaching the credentials check",
+    )
     def test_missing_kaggle_credentials_fails_clearly(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
             env = os.environ.copy()
