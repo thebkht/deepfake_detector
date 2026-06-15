@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: "Hybrid Three-Branch Deepfake Detector"
+message: "If you use this software, please cite it using these metadata."
+type: software
+authors:
+  - given-names: Bakhtiyor
+    family-names: Ganijon
+    email: me@thebkht.com
+    affiliation: "Sejong University"
+repository-code: "https://github.com/thebkht/deepfake_detector"
+abstract: >-
+  A hybrid discriminator for deepfake face detection that combines a spatial
+  CNN encoder (Branch A), a spatiotemporal derivative summary (Branch B), and a
+  physics-based optical-flow and photometric dynamics branch (Branch C), fused
+  and trained in sequential phases on the CelebA dataset.
+keywords:
+  - deepfake-detection
+  - computer-vision
+  - pytorch
+  - optical-flow
+  - face-forensics
+license: MIT
